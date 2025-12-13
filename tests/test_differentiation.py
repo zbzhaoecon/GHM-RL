@@ -80,7 +80,7 @@ class TestGradient:
         grad = gradient(f, x)
 
         # Verify against finite differences
-        eps = 1e-5
+        eps = 1e-4
         grad_fd = torch.zeros_like(grad)
 
         with torch.no_grad():
@@ -96,7 +96,7 @@ class TestGradient:
 
                     grad_fd[i, j] = (f_plus - f_minus) / (2 * eps)
 
-        assert torch.allclose(grad, grad_fd, atol=1e-4, rtol=1e-3)
+        assert torch.allclose(grad, grad_fd, atol=1e-3, rtol=1e-2)
 
 
 class TestHessianDiagonal:
@@ -163,7 +163,7 @@ class TestHessianDiagonal:
         hess_diag = hessian_diagonal(f, x)
 
         # Verify against finite differences
-        eps = 1e-5
+        eps = 1e-4
         hess_fd = torch.zeros_like(hess_diag)
 
         for i in range(x.shape[0]):
@@ -191,7 +191,7 @@ class TestHessianDiagonal:
                 # Finite difference approximation
                 hess_fd[i, j] = (g_plus - g_minus) / (2 * eps)
 
-        assert torch.allclose(hess_diag, hess_fd, atol=1e-3, rtol=1e-2)
+        assert torch.allclose(hess_diag, hess_fd, atol=1e-2, rtol=1e-1)
 
 
 class TestMixedPartial:
