@@ -64,11 +64,15 @@ class TestSimulatePath:
     """Tests for full trajectory simulation."""
 
     def test_deterministic_path(self):
-        """Test simulation of deterministic ODE: dx = μx dt."""
+        """Test simulation of deterministic ODE: dx = μx dt.
+
+        Uses small dt to verify that discretization errors don't accumulate
+        significantly over the path.
+        """
         x0 = torch.ones(1, 1)
         mu = 0.1
         T = 1.0
-        dt = 0.01
+        dt = 0.0001  # Small dt to minimize error accumulation
 
         drift_fn = lambda x, t: mu * x
         diffusion_fn = lambda x, t: torch.zeros_like(x)
@@ -77,8 +81,9 @@ class TestSimulatePath:
 
         # Analytical solution: x(T) = x0 * exp(μ*T)
         expected = x0 * torch.exp(torch.tensor(mu * T))
-        # Euler method has global error O(dt), so with dt=0.01 we expect ~1e-4 error
-        assert torch.allclose(x_T, expected, atol=1e-4)
+        # With dt=0.0001 over T=1, Euler global error is O(1e-4)
+        # We use 1e-5 tolerance to ensure errors are well-controlled
+        assert torch.allclose(x_T, expected, atol=1e-5)
 
     def test_return_full_path(self):
         """Test that full path has correct shape."""
