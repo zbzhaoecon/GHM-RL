@@ -77,7 +77,8 @@ class TestSimulatePath:
 
         # Analytical solution: x(T) = x0 * exp(μ*T)
         expected = x0 * torch.exp(torch.tensor(mu * T))
-        assert torch.allclose(x_T, expected, atol=1e-6)
+        # Euler method has global error O(dt), so with dt=0.01 we expect ~1e-4 error
+        assert torch.allclose(x_T, expected, atol=1e-4)
 
     def test_return_full_path(self):
         """Test that full path has correct shape."""
