@@ -5,6 +5,7 @@ This module implements the continuous-time model where a firm manages
 cash reserves subject to permanent and transitory productivity shocks.
 
 Reference: GHM_v2.pdf, Section 1
+Phase 2 implementation - Complete.
 """
 
 from dataclasses import dataclass
