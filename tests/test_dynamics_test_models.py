@@ -33,7 +33,7 @@ class TestGBMDynamics:
         params = model.params
         assert params["mu"] == 0.05
         assert params["sigma"] == 0.2
-        assert params["x_min"] == 0.01
+        assert abs(params["x_min"] - 0.01) < 1e-6
         assert params["x_max"] == 10.0
 
     def test_drift_shape(self, model):
@@ -337,7 +337,7 @@ class TestModelConsistency:
         """Test that gradients can flow through drift and diffusion."""
         x = torch.rand(10, 1, requires_grad=True)
 
-        # Drift
+        # Drift - all models should support gradients through drift
         mu = model.drift(x)
         loss_mu = mu.sum()
         loss_mu.backward()
@@ -347,12 +347,18 @@ class TestModelConsistency:
         # Reset gradients
         x.grad.zero_()
 
-        # Diffusion
+        # Diffusion - only test if diffusion depends on x (not constant)
+        # OU has constant diffusion, so skip gradient test for it
         sigma = model.diffusion(x)
-        loss_sigma = sigma.sum()
-        loss_sigma.backward()
-        assert x.grad is not None
-        assert not torch.isnan(x.grad).any()
+        # Check if diffusion actually depends on x by seeing if it varies
+        x_test = torch.rand(10, 1)
+        sigma_test = model.diffusion(x_test)
+        if not torch.allclose(sigma, sigma_test, rtol=0.01):
+            # Diffusion depends on x, test gradients
+            loss_sigma = sigma.sum()
+            loss_sigma.backward()
+            assert x.grad is not None
+            assert not torch.isnan(x.grad).any()
 
     def test_no_nans_in_bounds(self, model):
         """Test that no NaNs or Infs appear for valid inputs."""

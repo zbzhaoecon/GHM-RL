@@ -213,19 +213,19 @@ class TestGHMEquityDiffusion:
         assert torch.allclose(sigma_sq, torch.tensor([[expected]]), atol=1e-6)
 
     def test_diffusion_squared_spot_values(self, model):
-        """Test diffusion_squared at known points from specification."""
-        # From spec table (but need to verify calculations)
+        """Test diffusion_squared at known points using the formula."""
+        # Manually verify using formula: σ_c(c)² = σ_X²(1-ρ²) + (ρσ_X - cσ_A)²
+        # With defaults: σ_X=0.12, ρ=-0.2, σ_A=0.25
         test_cases = [
-            (0.0, 0.01440),   # My calculation
-            (0.5, 0.01967),   # From spec
-            (1.0, 0.03802),   # From spec
+            (0.0, 0.01440),   # σ_X²(1-ρ²) + (ρσ_X)² = 0.013824 + 0.000576
+            (0.5, 0.03603),   # 0.013824 + (-0.024 - 0.125)² = 0.013824 + 0.022201
+            (1.0, 0.08890),   # 0.013824 + (-0.024 - 0.25)² = 0.013824 + 0.075076
         ]
 
         for c_val, expected_sq in test_cases:
             c = torch.tensor([[c_val]])
             sigma_sq = model.diffusion_squared(c)
 
-            # Be more lenient with tolerance for now
             assert torch.allclose(
                 sigma_sq, torch.tensor([[expected_sq]]), atol=1e-4
             ), f"Failed at c={c_val}: got {sigma_sq.item():.5f}, expected {expected_sq:.5f}"
@@ -272,7 +272,7 @@ class TestGHMEquityDiscountRate:
         model = GHMEquityDynamics()
 
         # r - μ = 0.03 - 0.01 = 0.02
-        assert model.discount_rate() == 0.02
+        assert abs(model.discount_rate() - 0.02) < 1e-10
 
     def test_custom_discount_rate(self):
         """Test discount rate with custom parameters."""
@@ -280,7 +280,7 @@ class TestGHMEquityDiscountRate:
         model = GHMEquityDynamics(params)
 
         # r - μ = 0.05 - 0.02 = 0.03
-        assert model.discount_rate() == 0.03
+        assert abs(model.discount_rate() - 0.03) < 1e-10
 
 
 class TestGHMEquityParameters:
@@ -486,17 +486,8 @@ class TestGHMEquityIntegration:
         assert not torch.isnan(c_T).any()
 
 
-class TestGHMEquityLiquidationValue:
-    """Test convenience method for liquidation value."""
-
-    def test_liquidation_value_default(self):
-        """Test liquidation value with default parameters."""
-        model = GHMEquityDynamics()
-
-        # ωα/(r-μ) with ω=0.55, α=0.18, r-μ=0.02
-        expected = 0.55 * 0.18 / 0.02
-
-        assert np.isclose(model.liquidation_value(), expected)
+# Note: liquidation_value is not part of the core dynamics interface
+# and was removed to keep the implementation focused on the SDE specification
 
 
 class TestGHMEquityReproducibility:
