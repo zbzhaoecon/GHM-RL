@@ -34,11 +34,11 @@ def make_env(seed: int = 0):
 
 def main():
     parser = argparse.ArgumentParser(description="Train SAC on GHM equity model")
-    parser.add_argument("--timesteps", type=int, default=100000)
+    parser.add_argument("--timesteps", type=int, default=1000000)  # Increased default
     parser.add_argument("--output", type=str, default="models/ghm_equity")
     parser.add_argument("--n-envs", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--eval-freq", type=int, default=5000)
+    parser.add_argument("--eval-freq", type=int, default=10000)  # Adjusted for longer training
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -48,6 +48,12 @@ def main():
     print(f"Creating {args.n_envs} parallel environments...")
     env = DummyVecEnv([make_env(args.seed + i) for i in range(args.n_envs)])
     eval_env = DummyVecEnv([make_env(args.seed + 100)])
+
+    # Compute correct discount factor from environment
+    # For continuous-time discounting: γ = exp(-ρ * dt) where ρ = r - μ
+    temp_env = GHMEquityEnv(dt=0.01, max_steps=1000, a_max=10.0, liquidation_penalty=5.0)
+    gamma = temp_env.get_expected_discount_factor()
+    print(f"\nUsing discount factor γ = {gamma:.6f} (from continuous-time rate ρ = r - μ)")
 
     # Callbacks
     eval_callback = EvalCallback(
@@ -60,7 +66,7 @@ def main():
     )
 
     checkpoint_callback = CheckpointCallback(
-        save_freq=10000 // args.n_envs,
+        save_freq=50000 // args.n_envs,  # Save every 50k steps
         save_path=str(output_dir / "checkpoints"),
         name_prefix="sac_ghm",
     )
@@ -70,11 +76,11 @@ def main():
         "MlpPolicy",
         env,
         learning_rate=3e-4,
-        buffer_size=100000,
+        buffer_size=200000,  # Increased for longer training
         learning_starts=1000,
         batch_size=256,
         tau=0.005,
-        gamma=0.99,
+        gamma=gamma,  # FIX: Use correct discount factor from environment
         train_freq=1,
         gradient_steps=1,
         ent_coef="auto",
