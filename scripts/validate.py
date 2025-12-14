@@ -21,9 +21,46 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import torch
 from stable_baselines3 import SAC
+from scipy.interpolate import UnivariateSpline
+from scipy.ndimage import gaussian_filter1d
 
 from macro_rl.envs import GHMEquityEnv
 from macro_rl.dynamics import GHMEquityParams
+
+
+def estimate_value_function_critic(
+    model: SAC,
+    c_grid: np.ndarray
+) -> np.ndarray:
+    """
+    Estimate value function using learned critic network.
+
+    Much faster and less noisy than Monte Carlo rollouts.
+    V(c) ≈ Q(c, π(c)) where π is the learned policy.
+
+    Args:
+        model: Trained SAC model
+        c_grid: State grid points (n,)
+
+    Returns:
+        V: Value function estimates (n,)
+    """
+    V = np.zeros_like(c_grid)
+
+    with torch.no_grad():
+        for i, c in enumerate(c_grid):
+            # Prepare observation
+            obs = torch.tensor([[c]], dtype=torch.float32)
+
+            # Get action from policy
+            action = model.actor(obs)
+
+            # Get Q-value from critic (use minimum of two Q-networks for conservative estimate)
+            q1 = model.critic(obs, action)[0].item()
+            q2 = model.critic(obs, action)[1].item()
+            V[i] = min(q1, q2)
+
+    return V
 
 
 def estimate_value_function(
@@ -89,13 +126,22 @@ def estimate_value_function(
     return c_grid, V_mean, V_std
 
 
-def compute_numerical_derivatives(c_grid: np.ndarray, V: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def compute_numerical_derivatives(
+    c_grid: np.ndarray,
+    V: np.ndarray,
+    smooth: bool = True,
+    sigma: float = 2.0
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute numerical first and second derivatives using central differences.
+
+    Optionally applies Gaussian smoothing to reduce noise amplification.
 
     Args:
         c_grid: State grid points (n,)
         V: Value function values (n,)
+        smooth: Whether to apply smoothing before differentiation
+        sigma: Gaussian smoothing parameter (standard deviation in grid points)
 
     Returns:
         V_prime: First derivative (n,)
@@ -103,11 +149,23 @@ def compute_numerical_derivatives(c_grid: np.ndarray, V: np.ndarray) -> tuple[np
     """
     dc = c_grid[1] - c_grid[0]
 
+    # Optionally smooth the value function first
+    if smooth:
+        V_smooth = gaussian_filter1d(V, sigma=sigma, mode='nearest')
+    else:
+        V_smooth = V
+
     # First derivative: central difference
-    V_prime = np.gradient(V, dc)
+    V_prime = np.gradient(V_smooth, dc)
+
+    # Smooth again before second derivative (noise amplifies)
+    if smooth:
+        V_prime_smooth = gaussian_filter1d(V_prime, sigma=sigma/2, mode='nearest')
+    else:
+        V_prime_smooth = V_prime
 
     # Second derivative: central difference of first derivative
-    V_double_prime = np.gradient(V_prime, dc)
+    V_double_prime = np.gradient(V_prime_smooth, dc)
 
     return V_prime, V_double_prime
 
@@ -544,9 +602,11 @@ def create_validation_plots(
 def main():
     parser = argparse.ArgumentParser(description="Validate learned GHM solution")
     parser.add_argument("--model", type=str, required=True, help="Path to trained model")
-    parser.add_argument("--n-episodes", type=int, default=50, help="Episodes for value estimation")
+    parser.add_argument("--n-episodes", type=int, default=50, help="Episodes for value estimation (if using rollouts)")
     parser.add_argument("--n-grid", type=int, default=200, help="Grid points for evaluation")
     parser.add_argument("--output", type=str, default=None, help="Output directory (default: model dir)")
+    parser.add_argument("--use-critic", action="store_true", help="Use critic network instead of rollouts (faster, less noisy)")
+    parser.add_argument("--smooth", action="store_true", default=True, help="Apply smoothing to derivatives (recommended)")
     args = parser.parse_args()
 
     # Setup paths
@@ -565,8 +625,9 @@ def main():
     print("=" * 60)
     print(f"Model: {model_path}")
     print(f"Output: {output_dir}")
-    print(f"Episodes per grid point: {args.n_episodes}")
     print(f"Grid points: {args.n_grid}")
+    print(f"Method: {'Critic network' if args.use_critic else f'Rollouts ({args.n_episodes} episodes)'}")
+    print(f"Smoothing: {'Enabled' if args.smooth else 'Disabled'}")
 
     # Load model
     print("\nLoading model...")
@@ -581,10 +642,21 @@ def main():
     )
     params = env._dynamics.p
 
+    # Create state grid
+    c_min = 0.01
+    c_max = env.dynamics.state_space.upper.numpy()[0]
+    c_grid = np.linspace(c_min, c_max, args.n_grid)
+
     # Estimate value function
-    c_grid, V_mean, V_std = estimate_value_function(
-        model, env, args.n_episodes, args.n_grid
-    )
+    if args.use_critic:
+        print("\nEstimating value function using critic network...")
+        V_mean = estimate_value_function_critic(model, c_grid)
+        V_std = np.zeros_like(V_mean)  # No variance estimate for critic method
+    else:
+        print(f"\nEstimating value function using rollouts...")
+        c_grid, V_mean, V_std = estimate_value_function(
+            model, env, args.n_episodes, args.n_grid
+        )
 
     # Evaluate policy
     print("\nEvaluating policy...")
@@ -592,7 +664,7 @@ def main():
 
     # Compute derivatives
     print("Computing numerical derivatives...")
-    V_prime, V_double_prime = compute_numerical_derivatives(c_grid, V_mean)
+    V_prime, V_double_prime = compute_numerical_derivatives(c_grid, V_mean, smooth=args.smooth)
 
     # Detect threshold
     print("Detecting payout threshold...")
