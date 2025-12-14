@@ -277,11 +277,17 @@ pip install -e .
 # Run tests
 pytest tests/
 
-# Train on 1D equity model
-python scripts/train.py --config configs/ghm_equity_1d.yaml
+# Train SAC agent on GHM equity model
+python scripts/train_ghm.py --timesteps 500000 --output models/ghm_equity
 
-# Evaluate
-python scripts/evaluate.py --checkpoint outputs/model.pt
+# Monitor training
+tensorboard --logdir models/ghm_equity/tensorboard
+
+# Validate solution correctness
+python scripts/validate.py --model models/ghm_equity/final_model
+
+# Evaluate policy
+python scripts/evaluate.py --model models/ghm_equity/final_model
 ```
 
 ---
@@ -294,6 +300,33 @@ python scripts/evaluate.py --checkpoint outputs/model.pt
 
 ---
 
+## Solution Validation
+
+After training, validate that the learned solution satisfies analytical properties from the GHM paper:
+
+```bash
+python scripts/validate.py --model models/ghm_equity/final_model
+```
+
+The validation script checks:
+
+1. **Smooth Pasting**: F'(c*) = 1 at the payout threshold
+2. **Super-Contact**: F''(c*) = 0 at the threshold
+3. **HJB Equation**: Residual is small in continuation region
+4. **Monotonicity**: F'(c) > 0 everywhere
+5. **Concavity**: F''(c) < 0 below threshold
+6. **Policy Threshold**: Clear jump from retention to payout
+
+**Outputs:**
+- Console report with PASS/FAIL for each criterion
+- `validation_plots.png`: Six-panel diagnostic figure
+- `value_and_policy.png`: Combined plot matching paper figures
+- `validation_data.npz`: Raw numerical data
+
+See [docs/VALIDATION.md](docs/VALIDATION.md) for detailed methodology and troubleshooting.
+
+---
+
 ## Development Workflow
 
 1. **Pick a module** from the current phase
@@ -302,4 +335,10 @@ python scripts/evaluate.py --checkpoint outputs/model.pt
 4. **Document** key design choices
 5. **PR review** before moving to next module
 
-Current focus: **Phase 1 - Numerical Foundations**
+Current focus: **Phase 4 Complete - RL Training and Validation**
+
+**Completed:**
+- ✅ Phase 1: Numerical foundations (differentiation, integration, sampling)
+- ✅ Phase 2: Model specifications (GHM equity dynamics)
+- ✅ Phase 3: RL environment (GHM equity gymnasium environment)
+- ✅ Phase 4: Training scripts and validation tools
