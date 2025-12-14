@@ -151,9 +151,9 @@ class ContinuousTimeEnv(gym.Env):
 
         self._step_count += 1
 
-        # Check termination
-        terminated = self._get_terminated()
-        truncated = self._step_count >= self.max_steps
+        # Check termination (ensure Python bool, not numpy bool)
+        terminated = bool(self._get_terminated())
+        truncated = bool(self._step_count >= self.max_steps)
 
         # Apply terminal reward if needed
         if terminated:
