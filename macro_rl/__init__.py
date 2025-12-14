@@ -2,6 +2,6 @@
 
 __version__ = "0.1.0"
 
-from macro_rl import numerics
+from macro_rl import numerics, envs
 
-__all__ = ["numerics", "__version__"]
+__all__ = ["numerics", "envs", "__version__"]
