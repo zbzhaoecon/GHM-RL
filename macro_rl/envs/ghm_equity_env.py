@@ -182,3 +182,24 @@ class GHMEquityEnv(ContinuousTimeEnv):
         rho = self._dynamics.discount_rate()
         gamma = np.exp(-rho * self.dt)
         return float(gamma)
+
+    def get_dynamics_info(self, state: np.ndarray) -> Dict[str, float]:
+        """
+        Get dynamics information at a given state (for debugging).
+
+        Args:
+            state: State [c] to query
+
+        Returns:
+            Dictionary with drift, diffusion, and diffusion_sq
+        """
+        c = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+        drift = self._dynamics.drift(c).item()
+        diffusion = self._dynamics.diffusion(c).item()
+        diffusion_sq = self._dynamics.diffusion_squared(c).item()
+
+        return {
+            "drift": drift,
+            "diffusion": diffusion,
+            "diffusion_sq": diffusion_sq,
+        }
