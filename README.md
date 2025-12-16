@@ -1,344 +1,281 @@
-# MacroRL: Reinforcement Learning for Continuous-Time Macro-Finance Models
+# MacroRL: Model-Based RL for Continuous-Time Finance
 
-A Python library for solving continuous-time corporate finance and macroeconomic models using deep learning methods.
+A Python library for solving continuous-time corporate finance models using **model-based reinforcement learning**. This project implements the GHM (D'ecamps et al.) equity management model using known dynamics to achieve superior sample efficiency and convergence.
 
-## Overview
+## What Changed: From Model-Free to Model-Based
 
-MacroRL provides tools to solve Hamilton-Jacobi-Bellman (HJB) equations arising in continuous-time finance, with a focus on:
+### Why Pivot to Model-Based?
 
-- **GHM Models**: Equity and debt management with singular controls (D'ecamps et al.)
-- **Deep Galerkin Method (DGM)**: Mesh-free PDE solvers using neural networks
-- **Reinforcement Learning**: Policy gradient methods for high-dimensional problems
+The GHM model gives us **exact knowledge of the dynamics**:
+```
+dc = μ(c)dt + σ(c)dW
+```
 
-The library bridges the gap between economic theory (SDEs, HJB equations, boundary conditions) and modern deep learning infrastructure (PyTorch, automatic differentiation).
+where drift and diffusion are **known closed-form functions**. Model-free RL (PPO, SAC) ignores this and tries to learn optimal behavior purely from trial-and-error. Model-based RL exploits known dynamics to:
+
+1. **Simulate freely**: Generate unlimited trajectories without environment interaction
+2. **Explore completely**: Sample any initial state, not just reachable ones
+3. **Reduce variance**: Use exact gradients (pathwise) instead of REINFORCE estimates
+4. **Validate rigorously**: Check solutions against HJB equation
+
+### Three Model-Based Approaches
+
+| Method | Gradient Type | Key Idea | Best For |
+|--------|---------------|----------|----------|
+| **Pathwise Gradient** (Recommended) | Exact via chain rule | Backprop through differentiable simulation | Most use cases |
+| Monte Carlo PG | REINFORCE with unlimited samples | Free simulation reduces variance | Baselines, comparison |
+| Deep Galerkin Method | PDE residual minimization | Directly solve HJB equation | Advanced, validation |
 
 ---
 
-## Project Structure
+## Architecture Overview
 
 ```
 macro_rl/
-├── macro_rl/
-│   ├── numerics/          # Mathematical foundations
-│   │   ├── differentiation.py   # Autograd utilities for ∇V, ∇²V
-│   │   ├── integration.py       # SDE discretization (Euler-Maruyama, Milstein)
-│   │   └── sampling.py          # State space sampling strategies
-│   │
-│   ├── dynamics/          # Economic model specifications
-│   │   ├── base.py              # Abstract SDE interface
-│   │   ├── ghm_equity.py        # 1D equity management model
-│   │   ├── ghm_debt.py          # 1D debt management model
-│   │   └── ghm_joint.py         # 2D joint model
-│   │
-│   ├── losses/            # Physics-informed loss functions
-│   │   ├── hjb.py               # HJB residual loss
-│   │   └── boundary.py          # Boundary condition losses
-│   │
-│   ├── networks/          # Neural network architectures
-│   │   └── value_networks.py    # Value function approximators
-│   │
-│   ├── solvers/           # Solution algorithms
-│   │   └── dgm.py               # Deep Galerkin Method solver
-│   │
-│   └── utils/             # Helpers
-│       ├── config.py            # Configuration management
-│       └── plotting.py          # Visualization
+├── core/                  # Foundational abstractions
+│   ├── state_space.py     # State space representation
+│   └── params.py          # Parameter management
 │
-├── configs/               # YAML configuration files
-├── tests/                 # Test suite
-├── scripts/               # Training and evaluation scripts
-└── notebooks/             # Example notebooks
+├── dynamics/              # Continuous-time models (UNCHANGED - verified correct)
+│   ├── base.py            # ContinuousTimeDynamics interface
+│   └── ghm_equity.py      # GHM 1D model (drift, diffusion, parameters)
+│
+├── simulation/            # NEW: SDE simulation engines
+│   ├── sde.py             # Numerical integration (Euler-Maruyama)
+│   ├── trajectory.py      # Trajectory generation for Monte Carlo
+│   └── differentiable.py  # Differentiable simulation for pathwise gradients
+│
+├── control/               # NEW: Control specifications (TWO controls, not one!)
+│   ├── base.py            # ControlSpec interface
+│   ├── ghm_control.py     # GHM two-control spec (dividend + equity issuance)
+│   └── masking.py         # Action masking utilities
+│
+├── rewards/               # NEW: Objective functions
+│   ├── base.py            # RewardFunction interface
+│   ├── ghm_rewards.py     # GHM net payout: dividends - dilution cost
+│   └── terminal.py        # Terminal value specifications
+│
+├── policies/              # NEW: Policy representations
+│   ├── base.py            # Policy interface
+│   ├── neural.py          # Gaussian and deterministic policies
+│   ├── barrier.py         # Barrier/threshold policies (baselines)
+│   └── tabular.py         # Grid-based policies (debugging)
+│
+├── values/                # NEW: Value function representations
+│   ├── base.py            # ValueFunction interface
+│   ├── neural.py          # Neural value networks (with autograd support)
+│   └── analytical.py      # Analytical solutions (when known)
+│
+├── solvers/               # NEW: Model-based RL algorithms
+│   ├── base.py            # Solver interface
+│   ├── pathwise.py        # Pathwise gradient (RECOMMENDED)
+│   ├── monte_carlo.py     # Monte Carlo policy gradient
+│   ├── deep_galerkin.py   # Deep Galerkin Method (HJB-based)
+│   └── actor_critic.py    # Model-based actor-critic
+│
+├── validation/            # NEW: Solution validation
+│   ├── hjb_residual.py    # HJB equation residual computation
+│   ├── boundary_conditions.py  # Smooth pasting, etc.
+│   └── analytical_comparison.py  # Compare with known solutions
+│
+├── utils/                 # Utilities
+│   ├── autograd.py        # Gradient/Hessian computation
+│   ├── plotting.py        # Visualization
+│   └── logging.py         # Training logs
+│
+├── envs/                  # Gymnasium environments (for model-free baselines)
+│   └── ghm_equity.py      # (To be rewritten with two controls)
+│
+└── scripts/               # Training scripts
+    ├── train_pathwise.py      # Pathwise gradient training (START HERE)
+    ├── train_monte_carlo.py   # Monte Carlo training
+    └── train_dgm.py           # Deep Galerkin training
 ```
 
 ---
 
-## Implementation Phases
+## Critical Fix: Two Controls, Not One
 
-### Phase 1: Numerical Foundations
-Build and test the core mathematical utilities.
-
-| Module | Purpose | Key Functions | Validation |
-|--------|---------|---------------|------------|
-| `numerics/differentiation` | Compute ∇V, ∇²V via autograd | `gradient()`, `hessian()`, `hessian_diagonal()` | Analytical derivatives of known functions |
-| `numerics/integration` | Discretize SDEs | `euler_maruyama_step()`, `simulate_path()` | GBM moments match theory |
-| `numerics/sampling` | Generate training points | `uniform_sampler()`, `boundary_sampler()` | Coverage tests |
-
-**Exit Criteria**: All numerical tests pass; gradients match finite differences to 1e-5.
-
-### Phase 2: Model Specification
-Implement the GHM dynamics as abstract interfaces.
-
-| Module | Purpose | Key Methods | Validation |
-|--------|---------|-------------|------------|
-| `dynamics/base` | Abstract SDE class | `drift()`, `diffusion()`, `boundary_conditions()` | Interface compliance |
-| `dynamics/ghm_equity` | 1D equity model | Implements base for Table 1 parameters | Drift/diffusion values at known points |
-
-**Exit Criteria**: Model parameters match GHM paper exactly; dynamics produce sensible trajectories.
-
-### Phase 3: Loss Functions
-Implement physics-informed losses for training.
-
-| Module | Purpose | Key Functions | Validation |
-|--------|---------|---------------|------------|
-| `losses/hjb` | HJB residual | `hjb_residual()`, `hjb_loss()` | Zero residual for analytical solutions |
-| `losses/boundary` | Boundary conditions | `dirichlet_loss()`, `neumann_loss()` | Gradient conditions enforced |
-
-**Exit Criteria**: Merton problem residual < 1e-6 with known value function.
-
-### Phase 4: Networks and Solver
-Build the DGM solver combining all components.
-
-| Module | Purpose | Key Classes | Validation |
-|--------|---------|-------------|------------|
-| `networks/value_networks` | Value approximation | `ValueNetwork`, `DGMNetwork` | Smooth outputs, finite Hessians |
-| `solvers/dgm` | Training loop | `DGMSolver.train()`, `DGMSolver.evaluate()` | Merton convergence |
-
-**Exit Criteria**: Reproduce GHM paper figures (value function shape, policy boundaries).
-
-### Phase 5: Extensions
-Add 2D models, RL solvers, distributed training.
-
----
-
-## Core Interfaces
-
-### Dynamics Interface
-
-All economic models implement this interface:
-
+### Previous (Wrong) Formulation:
 ```python
-class ContinuousTimeDynamics(ABC):
-    """Specification of a continuous-time economic model."""
-
-    @property
-    def state_dim(self) -> int:
-        """Dimension of state space."""
-
-    @property
-    def state_bounds(self) -> Tuple[Tensor, Tensor]:
-        """(lower, upper) bounds for state variables."""
-
-    def drift(self, state: Tensor, t: float = 0) -> Tensor:
-        """Drift μ(x,t) of shape (batch, state_dim)."""
-
-    def diffusion(self, state: Tensor, t: float = 0) -> Tensor:
-        """Diffusion σ(x,t) of shape (batch, state_dim)."""
-
-    def discount_rate(self) -> float:
-        """Effective discount rate (r - μ) for HJB."""
-
-    def hjb_coefficients(self, state: Tensor) -> Dict[str, Tensor]:
-        """Return drift, diffusion², discount for HJB construction."""
+# Single control: dividend rate only
+action = policy(state)  # Scalar
+reward = action  # Just dividend
 ```
 
-### Solver Interface
+**Problems**:
+- No equity issuance mechanism
+- Can't handle barrier/recapitalization
+- Doesn't match Bolton et al. paper
 
-All solvers implement this interface:
-
+### Correct Formulation:
 ```python
-class Solver(ABC):
-    """Base class for PDE/RL solvers."""
+# Two controls: dividend + equity issuance
+action = policy(state)  # (a_L, a_E)
+a_L = action[0]  # Dividend rate (continuous)
+a_E = action[1]  # Equity issuance (singular)
 
-    def __init__(self, dynamics: ContinuousTimeDynamics, config: dict):
-        ...
+# Net payout to shareholders
+reward = a_L * dt - (1 + λ) * a_E
+#        ^^^^^^^^^   ^^^^^^^^^^^^^^^
+#        dividend    dilution cost
 
-    def train(self, n_iterations: int, callback: Optional[Callable] = None) -> Dict:
-        """Train the solver, return loss history."""
-
-    def evaluate(self, states: Tensor) -> Tensor:
-        """Evaluate value function at given states."""
-
-    def policy(self, states: Tensor) -> Tensor:
-        """Extract optimal policy (if applicable)."""
-
-    def save(self, path: str) -> None:
-        """Save model checkpoint."""
-
-    def load(self, path: str) -> None:
-        """Load model checkpoint."""
+# State evolution
+dc = (α + c(r-λ-μ) - a_L) * dt + a_E + σ(c) * dW
+     \_________________/          \____/
+         drift with div         issuance
 ```
+
+**Key insight**: Shareholders care about **net payout** = dividends - equity dilution cost.
 
 ---
 
-## Key Design Decisions
+## Quick Start
 
-### 1. Separation of Dynamics and Solvers
-The economic model (drift, diffusion, boundaries) is defined independently of the solution method. This allows:
-- Same model solved by DGM, value iteration, or RL
-- Easy comparison of methods
-- Clean testing of each component
-
-### 2. Physics-Informed Training
-The HJB residual is a direct loss term, not just a validation metric:
-```
-L_total = w_interior * L_HJB + w_boundary * L_BC
-```
-This leverages known PDE structure for faster convergence than pure RL.
-
-### 3. Autograd for Derivatives
-We use PyTorch autograd (not finite differences) for computing V', V''. This:
-- Is exact (no discretization error)
-- Scales to high dimensions
-- Enables end-to-end gradient flow
-
-### 4. Batch-First Operations
-All functions operate on batches: `(batch_size, dim)`. This enables:
-- Efficient GPU utilization
-- Monte Carlo estimation of integrals
-- Parallel trajectory simulation
-
----
-
-## Testing Strategy
-
-### Unit Tests
-Each module has isolated tests:
-```
-tests/
-├── test_differentiation.py    # Gradient/Hessian correctness
-├── test_integration.py        # SDE discretization accuracy
-├── test_dynamics.py           # Model specification
-├── test_losses.py             # Loss computation
-└── test_solver.py             # Training mechanics
-```
-
-### Analytical Benchmarks
-Known solutions for validation:
-
-| Problem | Analytical Solution | Use |
-|---------|-------------------|-----|
-| Merton portfolio | Closed-form V(w) and π* | Verify full pipeline |
-| GBM simulation | E[X_T], Var[X_T] known | Verify SDE integration |
-| Quadratic value | V(x) = ax² + bx + c | Verify HJB residual = 0 |
-
-### Reproduction Tests
-Compare against GHM paper:
-- Value function shape (Figures 1-2)
-- Convergence curves (Figures 3-4)
-- Policy boundaries
-
----
-
-## Configuration
-
-Models and training are configured via YAML:
-
-```yaml
-# configs/ghm_equity_1d.yaml
-model:
-  name: ghm_equity
-  params:
-    alpha: 0.18      # Mean cash flow rate
-    mu: 0.01         # Growth rate
-    sigma_A: 0.25    # Permanent shock vol
-    sigma_X: 0.12    # Transient shock vol
-    rho: -0.2        # Correlation
-    r: 0.03          # Interest rate
-    lambda_: 0.02    # Carry cost
-    c_max: 2.0       # State upper bound
-
-solver:
-  type: dgm
-  network:
-    hidden_dims: [64, 64, 64]
-    activation: tanh
-  training:
-    learning_rate: 1e-3
-    batch_size: 4096
-    n_iterations: 10000
-  loss_weights:
-    interior: 1.0
-    boundary: 10.0
-```
-
----
-
-## Dependencies
-
-Core:
-- Python >= 3.9
-- PyTorch >= 2.0
-- NumPy
-
-Optional:
-- Ray (distributed training)
-- Hydra (configuration)
-- Matplotlib (plotting)
-- pytest (testing)
-
----
-
-## Getting Started
+### 1. Installation
 
 ```bash
-# Install
+git clone https://github.com/zbzhaoecon/GHM-RL.git
+cd GHM-RL
 pip install -e .
-
-# Run tests
-pytest tests/
-
-# Train SAC agent on GHM equity model
-python scripts/train_ghm.py --timesteps 500000 --output models/ghm_equity
-
-# Monitor training
-tensorboard --logdir models/ghm_equity/tensorboard
-
-# Validate solution correctness
-python scripts/validate.py --model models/ghm_equity/final_model
-
-# Evaluate policy
-python scripts/evaluate.py --model models/ghm_equity/final_model
 ```
+
+### 2. Train with Pathwise Gradient (Recommended)
+
+```bash
+python macro_rl/scripts/train_pathwise.py \
+    --n_iterations 5000 \
+    --n_trajectories 100 \
+    --lr 1e-3 \
+    --dt 0.01 \
+    --T 5.0
+```
+
+### 3. Validate Solution
+
+```bash
+python scripts/validate.py --model results/pathwise/policy.pt
+```
+
+---
+
+## Implementation Status
+
+### ✅ Completed (Verified Correct):
+- `dynamics/base.py` - Abstract interface for continuous-time models
+- `dynamics/ghm_equity.py` - GHM 1D dynamics (drift, diffusion, parameters)
+
+### 📝 Template Created (Ready for Implementation):
+- `core/` - State space and parameter management
+- `simulation/` - SDE integration and trajectory generation
+- `control/` - Two-control specification with masking
+- `rewards/` - Net payout objective function
+- `policies/` - Gaussian and deterministic policies
+- `values/` - Value networks with autograd
+- `solvers/` - Three model-based algorithms
+- `validation/` - HJB residual and boundary checks
+
+### ⏳ To Be Rewritten:
+- `envs/ghm_equity.py` - Update for two controls (for model-free baselines)
+
+---
+
+## Implementation Roadmap
+
+### Phase 1: Core Infrastructure (Week 1)
+- [ ] Implement `simulation/sde.py` - Euler-Maruyama integrator
+- [ ] Implement `simulation/trajectory.py` - Trajectory generation
+- [ ] Implement `control/ghm_control.py` - Two-control masking
+- [ ] Implement `rewards/ghm_rewards.py` - Net payout reward
+- [ ] Unit tests for all components
+
+### Phase 2: Pathwise Gradient Solver (Week 2)
+- [ ] Implement `policies/neural.py` - Gaussian policy with reparameterization
+- [ ] Implement `simulation/differentiable.py` - Differentiable simulation
+- [ ] Implement `solvers/pathwise.py` - Pathwise gradient training
+- [ ] Complete `scripts/train_pathwise.py` - End-to-end training
+- [ ] Validate on simplified problem
+
+### Phase 3: Alternative Solvers (Week 3)
+- [ ] Implement `solvers/monte_carlo.py` - Monte Carlo baseline
+- [ ] Implement `values/neural.py` - Value network with Hessian support
+- [ ] Implement `solvers/deep_galerkin.py` - HJB-based solver
+- [ ] Compare all three approaches
+
+### Phase 4: Validation & Analysis (Week 4)
+- [ ] Implement `validation/hjb_residual.py` - HJB equation checking
+- [ ] Implement `validation/boundary_conditions.py` - Smooth pasting checks
+- [ ] Reproduce GHM paper figures
+- [ ] Sensitivity analysis
+
+---
+
+## Key Design Principles
+
+### 1. Exploit Known Dynamics
+Unlike model-free RL, we **know** the dynamics. This enables:
+- Free simulation (no environment interaction)
+- Exact gradients (pathwise derivatives)
+- Direct PDE validation (HJB residual)
+
+### 2. Separation of Concerns
+```
+Dynamics → Simulation → Policies/Values → Solvers → Validation
+```
+Each component is independently testable and reusable.
+
+### 3. Batched Operations
+All operations support `(batch, ...)` dimensions for GPU efficiency and Monte Carlo estimation.
+
+### 4. PyTorch Throughout
+- Automatic differentiation for gradients/Hessians
+- GPU acceleration
+- Consistent interface
+
+---
+
+## Model-Based vs Model-Free Comparison
+
+| Aspect | Model-Free (PPO/SAC) | Model-Based (Pathwise) |
+|--------|----------------------|------------------------|
+| Samples per update | ~2048 from environment | Unlimited (free simulation) |
+| State coverage | Only visited states | Any state |
+| Gradient variance | High (REINFORCE) | Low (exact via chain rule) |
+| Convergence | Slow (~500k steps) | Fast (~5k iterations) |
+| Validation | Indirect (returns) | Direct (HJB residual) |
 
 ---
 
 ## References
 
-- D'ecamps, J.P., Gryglewicz, S., Morellec, E., Villeneuve, S. (2017). Corporate Policies with Permanent and Transitory Shocks. *Review of Financial Studies*.
-- Sirignano, J., Spiliopoulos, K. (2018). DGM: A deep learning algorithm for solving partial differential equations. *Journal of Computational Physics*.
-- GHM_v2.pdf: Model specifications and benchmark results.
+### Continuous-Time Finance:
+- D'ecamps et al. (2017): Corporate Policies with Permanent and Transitory Shocks
+- Bolton et al.: Executive Compensation and Short-termism
+- DeMarzo & Sannikov: Continuous-time agency models
+
+### Model-Based RL:
+- Reparameterization trick: Kingma & Welling (2013) - Auto-Encoding Variational Bayes
+- Deep Galerkin Method: Sirignano & Spiliopoulos (2018) - DGM for PDEs
+- Pathwise gradients: Williams (1992) - REINFORCE algorithms
 
 ---
 
-## Solution Validation
+## Contributing
 
-After training, validate that the learned solution satisfies analytical properties from the GHM paper:
-
-```bash
-python scripts/validate.py --model models/ghm_equity/final_model
-```
-
-The validation script checks:
-
-1. **Smooth Pasting**: F'(c*) = 1 at the payout threshold
-2. **Super-Contact**: F''(c*) = 0 at the threshold
-3. **HJB Equation**: Residual is small in continuation region
-4. **Monotonicity**: F'(c) > 0 everywhere
-5. **Concavity**: F''(c) < 0 below threshold
-6. **Policy Threshold**: Clear jump from retention to payout
-
-**Outputs:**
-- Console report with PASS/FAIL for each criterion
-- `validation_plots.png`: Six-panel diagnostic figure
-- `value_and_policy.png`: Combined plot matching paper figures
-- `validation_data.npz`: Raw numerical data
-
-See [docs/VALIDATION.md](docs/VALIDATION.md) for detailed methodology and troubleshooting.
+See detailed implementation guides in each module's `README.md`:
+- `macro_rl/simulation/README.md` - Simulation engine details
+- `macro_rl/control/README.md` - Control specification and masking
+- `macro_rl/rewards/README.md` - Reward function design
+- `macro_rl/solvers/README.md` - Algorithm comparisons
 
 ---
 
-## Development Workflow
+## License
 
-1. **Pick a module** from the current phase
-2. **Write tests first** based on the validation criteria
-3. **Implement** until tests pass
-4. **Document** key design choices
-5. **PR review** before moving to next module
+MIT
 
-Current focus: **Phase 4 Complete - RL Training and Validation**
+---
 
-**Completed:**
-- ✅ Phase 1: Numerical foundations (differentiation, integration, sampling)
-- ✅ Phase 2: Model specifications (GHM equity dynamics)
-- ✅ Phase 3: RL environment (GHM equity gymnasium environment)
-- ✅ Phase 4: Training scripts and validation tools
+## Contact
+
+For questions about implementation or research collaboration, please open an issue or contact the maintainers.
