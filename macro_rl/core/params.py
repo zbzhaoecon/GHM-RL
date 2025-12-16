@@ -6,9 +6,78 @@ serializing model parameters.
 """
 
 from typing import Any, Dict
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields, is_dataclass
 import json
 import torch
+
+
+def validate_params(params: Any) -> None:
+    """
+    Validate that parameters are in a valid dataclass format.
+
+    Args:
+        params: Dataclass instance to validate
+
+    Raises:
+        TypeError: If params is not a dataclass instance
+        ValueError: If any required field is None or invalid
+
+    Example:
+        >>> @dataclass
+        >>> class ModelParams:
+        ...     r: float
+        ...     sigma: float
+        >>> params = ModelParams(r=0.05, sigma=0.2)
+        >>> validate_params(params)  # Passes
+    """
+    if not is_dataclass(params):
+        raise TypeError(f"Expected dataclass instance, got {type(params)}")
+
+    # Check that no required fields are None
+    for field in fields(params):
+        value = getattr(params, field.name)
+        if value is None and field.default is field.default_factory is None:
+            raise ValueError(f"Required parameter '{field.name}' is None")
+
+
+def params_to_dict(params: Any) -> Dict[str, Any]:
+    """
+    Convert dataclass parameters to dictionary.
+
+    Handles conversion of torch.Tensor to Python native types.
+
+    Args:
+        params: Dataclass instance
+
+    Returns:
+        Dictionary representation of parameters
+
+    Example:
+        >>> @dataclass
+        >>> class ModelParams:
+        ...     r: float = 0.05
+        ...     bounds: torch.Tensor = torch.tensor([0.0, 1.0])
+        >>> params = ModelParams()
+        >>> params_to_dict(params)
+        {'r': 0.05, 'bounds': [0.0, 1.0]}
+    """
+    if not is_dataclass(params):
+        raise TypeError(f"Expected dataclass instance, got {type(params)}")
+
+    result = {}
+    for field in fields(params):
+        value = getattr(params, field.name)
+
+        # Convert torch tensors to lists
+        if isinstance(value, torch.Tensor):
+            result[field.name] = value.tolist()
+        # Recursively handle nested dataclasses
+        elif is_dataclass(value):
+            result[field.name] = params_to_dict(value)
+        else:
+            result[field.name] = value
+
+    return result
 
 
 class ParameterManager:
