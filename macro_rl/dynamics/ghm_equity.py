@@ -34,6 +34,19 @@ class GHMEquityParams:
     # State bounds
     c_max: float = 2.0
 
+    # Control and reward parameters
+    omega: float = 0.8        # Liquidation recovery rate
+    p: float = 0.5            # Additional parameter (placeholder)
+    phi: float = 0.5          # Additional parameter (placeholder)
+
+    def __post_init__(self):
+        """Compute derived parameters."""
+        # Liquidation value: ω·α/(r-μ)
+        if self.r > self.mu:
+            self.liquidation_value = self.omega * self.alpha / (self.r - self.mu)
+        else:
+            self.liquidation_value = 0.0
+
 
 class GHMEquityDynamics(ContinuousTimeDynamics):
     """

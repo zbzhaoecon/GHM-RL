@@ -106,14 +106,11 @@ class GHMRewardFunction(RewardFunction):
 
         Returns:
             Rewards (batch,)
-
-        TODO: Implement reward computation
-        - Extract a_L and a_E from action
-        - Compute dividend flow: a_L * dt
-        - Compute issuance cost: (1 + λ) * a_E
-        - Return net: dividend - issuance_cost
         """
-        raise NotImplementedError
+        a_L = action[:, 0]
+        a_E = action[:, 1]
+        # Dividend flow minus issuance cost
+        return a_L * dt - (1.0 + self.issuance_cost) * a_E
 
     def terminal_reward(
         self,
@@ -132,12 +129,10 @@ class GHMRewardFunction(RewardFunction):
 
         Returns:
             Terminal rewards (batch,)
-
-        TODO: Implement terminal reward
-        - Return liquidation_value where terminated=True
-        - Return 0 where terminated=False
         """
-        raise NotImplementedError
+        terminated_f = terminated.to(dtype=torch.float32, device=state.device)
+        value = torch.tensor(self.liquidation_value, dtype=torch.float32, device=state.device)
+        return terminated_f * value
 
     def net_payout(
         self,
@@ -155,10 +150,10 @@ class GHMRewardFunction(RewardFunction):
 
         Returns:
             Net payouts (batch,)
-
-        TODO: Implement (can reuse step_reward logic)
         """
-        raise NotImplementedError
+        # Create dummy state (not used in step_reward)
+        dummy_state = torch.zeros(action.shape[0], 1, device=action.device)
+        return self.step_reward(dummy_state, action, dummy_state, dt)
 
     def total_issuance_cost(
         self,
@@ -175,10 +170,9 @@ class GHMRewardFunction(RewardFunction):
 
         Returns:
             Total costs (batch,)
-
-        TODO: Implement issuance cost
         """
-        raise NotImplementedError
+        a_E = action[:, 1]
+        return (1.0 + self.issuance_cost) * a_E
 
 
 class GHMRewardWithPenalty(GHMRewardFunction):
