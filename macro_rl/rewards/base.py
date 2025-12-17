@@ -94,13 +94,23 @@ class RewardFunction(ABC):
 
         Formula:
             R = Σ_t e^(-ρ·t·dt) · r_t · mask_t + e^(-ρ·T) · r_T
-
-        TODO: Implement discounted return computation
-        - Use continuous-time discounting
-        - Apply masks for early termination
-        - Add terminal reward with appropriate discount
         """
-        raise NotImplementedError
+        batch_size, T = rewards.shape
+        device = rewards.device
+
+        returns = torch.zeros(batch_size, device=device)
+
+        # Compute discounted sum of per-step rewards
+        for t in range(T):
+            discount = torch.exp(torch.tensor(-discount_rate * t * dt, device=device))
+            returns = returns + discount * rewards[:, t] * masks[:, t]
+
+        # Add terminal reward with appropriate discount
+        # Terminal time is T * dt
+        terminal_discount = torch.exp(torch.tensor(-discount_rate * T * dt, device=device))
+        returns = returns + terminal_discount * terminal_rewards
+
+        return returns
 
     def cumulative_reward(
         self,
@@ -116,7 +126,7 @@ class RewardFunction(ABC):
 
         Returns:
             Cumulative rewards (batch,)
-
-        TODO: Implement cumulative sum with masking
         """
-        raise NotImplementedError
+        # Apply masks and sum over time dimension
+        masked_rewards = rewards * masks
+        return masked_rewards.sum(dim=1)

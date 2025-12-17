@@ -16,35 +16,22 @@ from torch import Tensor
 
 
 @dataclass
-class ControlSpec(ABC):
+class ControlSpec:
     """
-    Abstract base class for control specifications.
+    Specification of the control/action space.
 
-    Attributes:
-        dim: Number of control variables
-        names: Names for each control (for visualization)
-        lower: Lower bounds for each control
-        upper: Upper bounds for each control
-        is_singular: Whether each control is singular/impulse (vs continuous)
-
-    Example:
-        >>> # Single continuous control (dividend rate)
-        >>> control_spec = ControlSpec(
-        ...     dim=1,
-        ...     names=("dividend",),
-        ...     lower=torch.tensor([0.0]),
-        ...     upper=torch.tensor([10.0]),
-        ...     is_singular=(False,)
-        ... )
-
-        >>> # Two controls (dividend + equity issuance)
-        >>> control_spec = GHMControlSpec(
-        ...     dim=2,
-        ...     names=("dividend", "equity_issuance"),
-        ...     lower=torch.tensor([0.0, 0.0]),
-        ...     upper=torch.tensor([10.0, 0.5]),
-        ...     is_singular=(False, True)
-        ... )
+    Attributes
+    ----------
+    dim : int
+        Number of control dimensions.
+    lower : Tensor
+        Lower bounds for each control, shape (dim,).
+    upper : Tensor
+        Upper bounds for each control, shape (dim,).
+    names : Tuple[str, ...]
+        Human-readable names for each control dimension, length dim.
+    is_singular : Tuple[bool, ...]
+        Whether each control is singular/impulse (vs continuous).
     """
 
     dim: int
@@ -53,60 +40,81 @@ class ControlSpec(ABC):
     upper: Tensor
     is_singular: Tuple[bool, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate control specification."""
-        # TODO: Add validation
-        # - Check lengths match dim
-        # - Check lower < upper
-        pass
+        # Basic consistency checks
+        assert self.lower.shape == (self.dim,), "lower must have shape (dim,)"
+        assert self.upper.shape == (self.dim,), "upper must have shape (dim,)"
+        assert len(self.names) == self.dim, "names must have length dim"
+        assert len(self.is_singular) == self.dim, "is_singular must have length dim"
 
     def clip(self, action: Tensor) -> Tensor:
         """
-        Clip actions to valid bounds.
+        Clip action to valid range [lower, upper].
 
-        Args:
-            action: Tensor of shape (..., dim)
+        Parameters
+        ----------
+        action : Tensor
+            Raw action tensor of shape (..., dim). The leading dimensions can be
+            batch or time; only the last dimension is interpreted as controls.
 
-        Returns:
-            Clipped action within [lower, upper]
-
-        TODO: Implement clipping
+        Returns
+        -------
+        Tensor
+            Clipped action with same shape as `action`.
         """
-        raise NotImplementedError
+        # Broadcast lower/upper to action.shape
+        lower = self.lower.to(action.device)
+        upper = self.upper.to(action.device)
+        while lower.dim() < action.dim():
+            lower = lower.unsqueeze(0)
+            upper = upper.unsqueeze(0)
+        return torch.clamp(action, lower, upper)
 
     def normalize(self, action: Tensor) -> Tensor:
         """
-        Normalize action to [0, 1]^dim.
+        Normalize actions from [lower, upper] to [0, 1].
 
-        Args:
-            action: Tensor of shape (..., dim) in original bounds
+        This is useful when the policy outputs are naturally in [0, 1] or when
+        we want a normalized representation for logging.
 
-        Returns:
-            Normalized action in [0, 1]^dim
+        Parameters
+        ----------
+        action : Tensor
+            Action tensor in physical units, shape (..., dim).
 
-        Formula:
-            action_norm = (action - lower) / (upper - lower)
-
-        TODO: Implement normalization
+        Returns
+        -------
+        Tensor
+            Normalized actions in [0, 1], same shape as `action`.
         """
-        raise NotImplementedError
+        lower = self.lower.to(action.device)
+        upper = self.upper.to(action.device)
+        while lower.dim() < action.dim():
+            lower = lower.unsqueeze(0)
+            upper = upper.unsqueeze(0)
+        return (action - lower) / (upper - lower)
 
     def denormalize(self, action_norm: Tensor) -> Tensor:
         """
-        Denormalize from [0, 1]^dim to original bounds.
+        Denormalize actions from [0, 1] back to [lower, upper].
 
-        Args:
-            action_norm: Tensor of shape (..., dim) in [0, 1]
+        Parameters
+        ----------
+        action_norm : Tensor
+            Normalized actions in [0, 1], shape (..., dim).
 
-        Returns:
-            Denormalized action in original bounds
-
-        Formula:
-            action = lower + action_norm * (upper - lower)
-
-        TODO: Implement denormalization
+        Returns
+        -------
+        Tensor
+            Actions in original scale, same shape as `action_norm`.
         """
-        raise NotImplementedError
+        lower = self.lower.to(action_norm.device)
+        upper = self.upper.to(action_norm.device)
+        while lower.dim() < action_norm.dim():
+            lower = lower.unsqueeze(0)
+            upper = upper.unsqueeze(0)
+        return action_norm * (upper - lower) + lower
 
     @abstractmethod
     def apply_mask(
@@ -139,16 +147,22 @@ class ControlSpec(ABC):
         """
         pass
 
-    def sample_uniform(self, n_samples: int) -> Tensor:
+    def sample_uniform(self, n_samples: int, device: Optional[str] = None) -> Tensor:
         """
         Sample uniformly from action space.
 
         Args:
             n_samples: Number of samples
+            device: Device to place samples on (default: same as bounds)
 
         Returns:
             Tensor of shape (n_samples, dim)
-
-        TODO: Implement uniform sampling
         """
-        raise NotImplementedError
+        if device is None:
+            device = self.lower.device
+
+        # Sample from [0, 1]^dim
+        samples_norm = torch.rand(n_samples, self.dim, device=device)
+
+        # Denormalize to [lower, upper]
+        return self.denormalize(samples_norm)

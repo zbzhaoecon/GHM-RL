@@ -100,14 +100,45 @@ class GHMControlSpec(ControlSpec):
         Constraints applied:
             1. Dividend: a_L ∈ [0, min(a_L_max, c/dt)]
             2. Issuance: a_E ∈ {0} ∪ [threshold·a_E_max, a_E_max]
-
-        TODO: Implement masking logic
-        - Extract c from state
-        - Clip a_L to available cash
-        - Apply threshold to a_E (zero if below threshold)
-        - Handle batch dimensions correctly
         """
-        raise NotImplementedError
+        # Ensure correct shape assumptions
+        assert action.shape[-1] == 2, "GHMControlSpec expects 2D actions"
+        assert state.dim() == 2, "state should be (batch, state_dim)"
+
+        device = action.device
+        # Move bounds to correct device
+        lower = self.lower.to(device)
+        upper = self.upper.to(device)
+
+        # Extract controls
+        a_L = action[:, 0]
+        a_E = action[:, 1]
+
+        # Cash level c is first state component
+        c = state[:, 0]
+
+        # 1. Dividend constraint:
+        #    Dividends in this time step cannot exceed available cash: a_L * dt <= c
+        #    => a_L <= c / dt
+        #    Also bound by [0, a_L_max].
+        max_dividend = torch.clamp(c / dt, min=0.0, max=upper[0])
+        a_L_masked = torch.minimum(torch.maximum(a_L, lower[0]), max_dividend)
+
+        # 2. Equity issuance threshold:
+        #    If a_E is below issuance_threshold * a_E_max, force it to 0.
+        threshold_value = self.issuance_threshold * upper[1]
+        a_E_masked = torch.where(
+            a_E >= threshold_value,
+            a_E,
+            torch.zeros_like(a_E),
+        )
+
+        # Ensure issuance is also within [0, a_E_max]
+        a_E_masked = torch.clamp(a_E_masked, min=lower[1], max=upper[1])
+
+        # Stack back into (batch, 2)
+        masked = torch.stack([a_L_masked, a_E_masked], dim=-1)
+        return masked
 
     def compute_net_payout(
         self,
@@ -124,10 +155,10 @@ class GHMControlSpec(ControlSpec):
 
         Returns:
             Net payout (batch,)
-
-        TODO: Implement net payout computation
         """
-        raise NotImplementedError
+        a_L = action[:, 0]
+        a_E = action[:, 1]
+        return a_L - a_E
 
     def issuance_indicator(
         self,
@@ -143,10 +174,9 @@ class GHMControlSpec(ControlSpec):
 
         Returns:
             Indicator (batch,) of type float
-
-        TODO: Implement issuance indicator
         """
-        raise NotImplementedError
+        a_E = action[:, 1]
+        return (a_E > 0).to(dtype=torch.float32)
 
     def total_issuance_cost(
         self,
@@ -163,10 +193,9 @@ class GHMControlSpec(ControlSpec):
 
         Returns:
             Total cost (batch,)
-
-        TODO: Implement issuance cost computation
         """
-        raise NotImplementedError
+        indicator = self.issuance_indicator(action)
+        return self.issuance_cost * indicator
 
 
 class GHMControlSpecWithBarrier(GHMControlSpec):
