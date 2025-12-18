@@ -71,9 +71,14 @@ class ValueNetwork(nn.Module):
         V_ss_diag = []
         for i in range(state.shape[-1]):
             grad_i = V_s[:, i]               # (batch,)
-            V_ss_i = torch.autograd.grad(
-                grad_i.sum(), state, create_graph=True
-            )[0][:, i]                        # (batch,)
+            grad_output = torch.autograd.grad(
+                grad_i.sum(), state, create_graph=True, allow_unused=True
+            )[0]
+            if grad_output is not None:
+                V_ss_i = grad_output[:, i]    # (batch,)
+            else:
+                # If gradient is None, second derivative is zero
+                V_ss_i = torch.zeros_like(grad_i)
             V_ss_diag.append(V_ss_i)
         V_ss_diag = torch.stack(V_ss_diag, dim=-1)
 
