@@ -64,7 +64,7 @@ def load_checkpoint(checkpoint_path: str):
 def compute_policy_value_grid(ac: ActorCritic, state_space: StateSpace, n_points: int = 100):
     """Compute policy and value function on a grid over the state space."""
     # Create state grid
-    c_values = np.linspace(state_space.bounds[0, 0], state_space.bounds[0, 1], n_points)
+    c_values = np.linspace(state_space.lower[0].item(), state_space.upper[0].item(), n_points)
     states = torch.tensor(c_values, dtype=torch.float32).unsqueeze(1)
 
     with torch.no_grad():
@@ -114,10 +114,10 @@ def compute_hjb_residuals(results: dict, dynamics: GHMEquityDynamics, dt: float 
         # Reward
         a_L = actions_t[:, 0:1]
         a_E = actions_t[:, 1:2]
-        reward = a_L * dt - (1 + dynamics.lambda_cost) * a_E  # [N, 1]
+        reward = a_L * dt - (1 + dynamics.p.lambda_) * a_E  # [N, 1]
 
         # HJB residual: r(s,a) + V_s·f(s,a) + 0.5·V_ss·σ²(s,a) - ρ·V
-        discount_rate = dynamics.r - dynamics.mu
+        discount_rate = dynamics.p.r - dynamics.p.mu
         hjb_residual = (
             reward +
             V_s_t * drift +
@@ -395,8 +395,10 @@ def main():
     ac, config = load_checkpoint(args.checkpoint)
 
     # Setup environment components
-    state_space = StateSpace(c_max=args.c_max)
-    dynamics = GHMEquityDynamics()
+    from macro_rl.dynamics.ghm_equity import GHMEquityParams
+    params = GHMEquityParams(c_max=args.c_max)
+    dynamics = GHMEquityDynamics(params)
+    state_space = dynamics.state_space
 
     print(f"\n✓ State space: c ∈ [0, {args.c_max}]")
     print(f"✓ Sampling {args.n_points} points")
