@@ -25,7 +25,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from macro_rl.core.state_space import StateSpace
-from macro_rl.dynamics.ghm_equity import GHMDynamics
+from macro_rl.dynamics.ghm_equity import GHMEquityDynamics
 from macro_rl.networks.actor_critic import ActorCritic
 
 
@@ -92,7 +92,7 @@ def compute_policy_value_grid(ac: ActorCritic, state_space: StateSpace, n_points
     }
 
 
-def compute_hjb_residuals(results: dict, dynamics: GHMDynamics, dt: float = 0.01):
+def compute_hjb_residuals(results: dict, dynamics: GHMEquityDynamics, dt: float = 0.01):
     """Compute HJB residuals for validation of the value function."""
     c_values = results['c_values']
     actions = results['actions_mean']
@@ -397,7 +397,7 @@ def main():
 
     # Setup environment components
     state_space = StateSpace(c_max=args.c_max)
-    dynamics = GHMDynamics()
+    dynamics = GHMEquityDynamics()
 
     print(f"\n✓ State space: c ∈ [0, {args.c_max}]")
     print(f"✓ Sampling {args.n_points} points")
