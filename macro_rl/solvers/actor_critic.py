@@ -153,9 +153,9 @@ class ModelBasedActorCritic:
         # Drift and diffusion from dynamics
         drift = self.dynamics.drift(states, action)
         if hasattr(self.dynamics, "diffusion_squared"):
-            sigma_sq = self.dynamics.diffusion_squared(states, action)
+            sigma_sq = self.dynamics.diffusion_squared(states)
         else:
-            diff = self.dynamics.diffusion(states, action)
+            diff = self.dynamics.diffusion(states)
             sigma_sq = diff * diff
 
         # Instantaneous reward rate r(s,a)/dt
@@ -215,12 +215,12 @@ class ModelBasedActorCritic:
             a_flat = trajectories.actions.reshape(B * T, action_dim)
 
             _, log_probs_flat, _ = self.ac.evaluate_actions(
-                s_flat, a_flat[: s_flat.shape[0]]
+                s_flat, a_flat
             )
-            log_probs = log_probs_flat.reshape(B, T - 1)
+            log_probs = log_probs_flat.reshape(B, T)
 
             # Broadcast advantages over time, weighted by masks
-            adv = advantages.unsqueeze(-1) * trajectories.masks[:, : T - 1]
+            adv = advantages.unsqueeze(-1) * trajectories.masks
             actor_loss = -(log_probs * adv).sum(dim=-1).mean()
             losses["actor/advantage"] = float(advantages.mean().item())
 
