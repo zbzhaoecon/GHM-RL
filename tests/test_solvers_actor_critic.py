@@ -6,9 +6,9 @@ import pytest
 import torch
 import numpy as np
 
-from macro_rl.dynamics.ghm import GHMDynamics
-from macro_rl.control.base import ControlSpec
-from macro_rl.rewards.ghm import GHMReward
+from macro_rl.dynamics.ghm_equity import GHMEquityDynamics, GHMEquityParams
+from macro_rl.control.ghm_control import GHMControlSpec
+from macro_rl.rewards.ghm_rewards import GHMRewardFunction
 from macro_rl.networks.actor_critic import ActorCritic
 from macro_rl.solvers.actor_critic import ModelBasedActorCritic
 
@@ -17,27 +17,22 @@ from macro_rl.solvers.actor_critic import ModelBasedActorCritic
 def simple_setup():
     """Simple GHM setup with short horizon for fast tests."""
     # Dynamics
-    dynamics = GHMDynamics(
-        kappa=0.1,
-        theta_bar=0.02,
-        sigma_theta=0.01,
-        discount_rate=0.05,
-    )
+    params = GHMEquityParams()
+    dynamics = GHMEquityDynamics(params)
 
     # Control spec
-    control_spec = ControlSpec(
-        lower=torch.tensor([-1.0]),
-        upper=torch.tensor([1.0]),
-    )
+    control_spec = GHMControlSpec()
 
     # Reward function
-    reward_fn = GHMReward(
-        lambda_val=1.0,
-        target_theta=0.02,
+    reward_fn = GHMRewardFunction(
+        discount_rate=params.r - params.mu,
+        issuance_cost=params.lambda_,
+        liquidation_rate=params.omega,
+        liquidation_flow=params.alpha,
     )
 
-    state_dim = 2  # (theta, b)
-    action_dim = 1  # u
+    state_dim = 1  # cash reserves
+    action_dim = 2  # dividend, equity issuance
 
     return dynamics, control_spec, reward_fn, state_dim, action_dim
 
