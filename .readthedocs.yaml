@@ -16,12 +16,9 @@ formats:
 
 # Python configuration
 python:
-  version: "3.9"
   install:
     - method: pip
       path: .
-      extra_requirements:
-        - dev
     - requirements: docs/requirements.txt
 
 # Build settings
@@ -29,7 +26,3 @@ build:
   os: ubuntu-22.04
   tools:
     python: "3.9"
-  jobs:
-    post_install:
-      # Install the package in development mode
-      - pip install -e .
