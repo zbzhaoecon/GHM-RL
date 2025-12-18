@@ -122,14 +122,17 @@ def log_actor_critic_details(
         state_dim = solver.dynamics.state_space.dim
         states = torch.rand(n_samples, state_dim, device=device) * 10.0
 
+        # Pass states through shared trunk if present
+        features = solver.ac._features(states)
+
         # Get policy outputs
-        dist = solver.ac.actor(states)
+        dist = solver.ac.actor(features)
         actions = dist.sample()
         log_probs = dist.log_prob(actions).sum(dim=-1)
         entropy = dist.entropy().sum(dim=-1)
 
         # Get value predictions
-        values = solver.ac.critic(states).squeeze(-1)
+        values = solver.ac.critic(features).squeeze(-1)
 
         # Log policy statistics
         if hasattr(dist, 'scale'):
@@ -163,8 +166,12 @@ def log_actor_critic_details(
             states_tp1 = traj["states"][:, 1:].reshape(-1, state_dim)
             rewards = traj["rewards"][:, :-1].reshape(-1)
 
-            V_t = solver.ac.critic(states_t).squeeze(-1)
-            V_tp1 = solver.ac.critic(states_tp1).squeeze(-1)
+            # Pass through shared trunk if present
+            feat_t = solver.ac._features(states_t)
+            feat_tp1 = solver.ac._features(states_tp1)
+
+            V_t = solver.ac.critic(feat_t).squeeze(-1)
+            V_tp1 = solver.ac.critic(feat_tp1).squeeze(-1)
 
             # HJB residual: r + V_{t+1} - V_t (simplified, without discount for diagnostic)
             hjb_residual = rewards + V_tp1 - V_t
