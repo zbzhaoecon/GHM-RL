@@ -172,3 +172,7 @@ def test_actor_critic_all_layers_shared():
 
     assert action.shape == (batch_size, action_dim)
     assert value.shape == (batch_size,)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
