@@ -1,0 +1,15 @@
+# Documentation requirements for ReadTheDocs
+
+# Sphinx and extensions
+sphinx>=5.0.0
+sphinx-rtd-theme>=1.2.0
+sphinx-autodoc-typehints>=1.23.0
+
+# Core dependencies (for autodoc to import modules)
+torch>=1.12.0
+numpy>=1.21.0
+gymnasium>=0.26.0
+
+# Optional but recommended for full documentation build
+matplotlib>=3.5.0
+dataclasses; python_version<'3.7'
