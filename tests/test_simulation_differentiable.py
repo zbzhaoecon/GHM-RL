@@ -196,7 +196,7 @@ def test_differentiable_step():
     action_dim = control_spec.dim
 
     state = torch.ones(batch, state_dim, requires_grad=True)
-    action = torch.ones(batch, action_dim, requires_grad=True) * 0.1
+    action = torch.full((batch, action_dim), 0.1, requires_grad=True)
     noise = torch.randn(batch, state_dim)
 
     next_state = simulator._differentiable_step(state, action, noise)
