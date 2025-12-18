@@ -8,7 +8,7 @@ from macro_rl.simulation.differentiable import DifferentiableSimulator
 from macro_rl.control.ghm_control import GHMControlSpec
 from macro_rl.rewards.ghm_rewards import GHMRewardFunction
 from macro_rl.dynamics.ghm_equity import GHMEquityDynamics, GHMEquityParams
-
+import pytest
 
 class TinyReparamPolicy(nn.Module):
     """Simple reparameterized Gaussian policy for testing."""
@@ -33,7 +33,12 @@ def make_ghm_diff_simulator(dt=0.1, T=0.3):
     params = GHMEquityParams()
     dynamics = GHMEquityDynamics(params)
     control_spec = GHMControlSpec()
-    reward_fn = GHMRewardFunction(params)
+    reward_fn = GHMRewardFunction(
+        discount_rate=params.r - params.mu,
+        issuance_cost=params.lambda_,
+        liquidation_rate=params.omega,
+        liquidation_flow=params.alpha,
+    )
 
     simulator = DifferentiableSimulator(
         dynamics=dynamics,
@@ -260,3 +265,9 @@ def test_gradient_comparison_with_finite_diff():
     # Allow some numerical error
     relative_error = abs(analytical_first_param_grad - fd_grad) / (abs(fd_grad) + 1e-8)
     assert relative_error < 0.1, f"Gradient mismatch: analytical={analytical_first_param_grad}, fd={fd_grad}"
+
+
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
