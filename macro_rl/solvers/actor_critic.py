@@ -143,7 +143,7 @@ class ModelBasedActorCritic:
     def compute_hjb_residual(self, states: Tensor) -> Tensor:
         """Compute mean HJB residual for value function at given states."""
         # Value and its derivatives
-        V, V_s, V_ss = self.ac.critic.forward_with_grad(states)
+        V, V_s, V_ss = self.ac.evaluate_with_grad(states)
 
         # Policy action (deterministic mean)
         with torch.no_grad():
@@ -206,9 +206,12 @@ class ModelBasedActorCritic:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             # Flatten states/actions over time
-            B, T, state_dim = trajectories.states.shape
+            # Note: states has shape (B, n_steps+1, state_dim), actions has (B, n_steps, action_dim)
+            B = trajectories.states.shape[0]
+            state_dim = trajectories.states.shape[-1]
+            T = trajectories.actions.shape[1]  # Number of steps (transitions)
             action_dim = trajectories.actions.shape[-1]
-            s_flat = trajectories.states[:, :-1, :].reshape(B * (T - 1), state_dim)
+            s_flat = trajectories.states[:, :-1, :].reshape(B * T, state_dim)
             a_flat = trajectories.actions.reshape(B * T, action_dim)
 
             _, log_probs_flat, _ = self.ac.evaluate_actions(
