@@ -87,8 +87,9 @@ def compute_policy_value_grid(ac: ActorCritic, state_space: StateSpace, n_points
         dist = ac.actor.get_distribution(feat)
         actions_std = dist.stddev
 
-        # Get value gradients and Hessian diagonal (for HJB residuals)
-        values_grad, V_s, V_ss_diag = ac.evaluate_with_grad(states)
+    # Get value gradients and Hessian diagonal (for HJB residuals)
+    # Note: This requires gradients enabled, so it's outside the no_grad context
+    values_grad, V_s, V_ss_diag = ac.evaluate_with_grad(states)
 
     return {
         'c_values': c_values,
