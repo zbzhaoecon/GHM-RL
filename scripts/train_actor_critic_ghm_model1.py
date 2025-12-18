@@ -125,8 +125,8 @@ def log_actor_critic_details(
         # Pass states through shared trunk if present
         features = solver.ac._features(states)
 
-        # Get policy outputs
-        dist = solver.ac.actor(features)
+        # Get policy distribution and sample actions
+        dist = solver.ac.actor.get_distribution(features)
         actions = dist.sample()
         log_probs = dist.log_prob(actions).sum(dim=-1)
         entropy = dist.entropy().sum(dim=-1)
