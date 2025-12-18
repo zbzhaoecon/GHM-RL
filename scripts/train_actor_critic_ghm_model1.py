@@ -125,8 +125,8 @@ def log_actor_critic_details(
         # Pass states through shared trunk if present
         features = solver.ac._features(states)
 
-        # Get policy outputs
-        dist = solver.ac.actor(features)
+        # Get policy distribution and sample actions
+        dist = solver.ac.actor.get_distribution(features)
         actions = dist.sample()
         log_probs = dist.log_prob(actions).sum(dim=-1)
         entropy = dist.entropy().sum(dim=-1)
@@ -157,14 +157,16 @@ def log_actor_critic_details(
 
         # Log HJB residuals if using HJB loss
         if "hjb" in solver.critic_loss_type:
-            # Sample a trajectory for HJB residual computation
-            traj = solver.sample_trajectories(n_trajectories=min(32, n_samples))
+            # Sample trajectories for HJB residual computation
+            n_traj = min(32, n_samples)
+            initial_states = solver._sample_initial_states(n_traj)
+            traj = solver.simulator.rollout(solver.ac, initial_states)
 
             # Compute HJB residuals: dV/dt + H(x, dV/dx)
             # Approximate using finite differences
-            states_t = traj["states"][:, :-1].reshape(-1, state_dim)
-            states_tp1 = traj["states"][:, 1:].reshape(-1, state_dim)
-            rewards = traj["rewards"][:, :-1].reshape(-1)
+            states_t = traj.states[:, :-1].reshape(-1, state_dim)
+            states_tp1 = traj.states[:, 1:].reshape(-1, state_dim)
+            rewards = traj.rewards.reshape(-1)
 
             # Pass through shared trunk if present
             feat_t = solver.ac._features(states_t)
