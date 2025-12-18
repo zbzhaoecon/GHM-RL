@@ -194,3 +194,8 @@ class TestValueNetwork:
 
         # The values should be very close (small numerical differences OK)
         torch.testing.assert_close(V1, V2, rtol=1e-5, atol=1e-5)
+
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
