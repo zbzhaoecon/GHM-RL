@@ -320,8 +320,8 @@ If you use this framework in your research, please cite:
 .. code-block:: bibtex
 
    @software{ghm_rl_2025,
-     title = {GHM-RL: Model-Based Reinforcement Learning for Continuous-Time Corporate Finance},
-     author = {Your Name},
+     title = {MacroRL: Model-Based Reinforcement Learning for Continuous-Time Macro Finance},
+     author = {Zibo Zhao},
      year = {2025},
-     url = {https://github.com/yourusername/GHM-RL},
+     url = {https://github.com/zbzhaoecon/GHM-RL},
    }
