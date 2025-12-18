@@ -1,13 +1,13 @@
 # MacroRL: Model-Based RL for Continuous-Time Finance
 
-[![Documentation Status](https://readthedocs.org/projects/ghm-rl/badge/?version=latest)](https://ghm-rl.readthedocs.io/en/latest/?badge=latest)
+[![Documentation Status](https://readthedocs.org/projects/ghm-rl/badge/?version=latest)](https://macrorl.readthedocs.io/en/latest/?badge=latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.12+-red.svg)](https://pytorch.org/)
 
 A Python library for solving continuous-time corporate finance models using **model-based reinforcement learning**. This project implements the GHM (Gârleanu-Hackbarth-Morellec) equity management model using known dynamics to achieve superior sample efficiency and convergence.
 
-📖 **[Full Documentation](https://ghm-rl.readthedocs.io/)** | 🚀 **[Quick Start](#quick-start)** | 📚 **[Tutorials](https://ghm-rl.readthedocs.io/en/latest/tutorials/index.html)** | 📖 **[API Reference](https://ghm-rl.readthedocs.io/en/latest/api/index.html)**
+📖 **[Full Documentation](https://macrorl.readthedocs.io/)** | 🚀 **[Quick Start](#quick-start)** | 📚 **[Tutorials](https://macrorl.readthedocs.io/en/latest/tutorials/index.html)** | 📖 **[API Reference](https://macrorl.readthedocs.io/en/latest/api/index.html)**
 
 ## What Changed: From Model-Free to Model-Based
 
