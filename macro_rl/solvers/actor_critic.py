@@ -82,6 +82,24 @@ class ModelBasedActorCritic:
             dynamics, control_spec, reward_fn, dt, T
         )
 
+    def _sample_initial_states(self, n: int) -> Tensor:
+        """
+        Sample initial states from state space.
+
+        Backward-compatible helper that works with both old and new StateSpace API.
+        """
+        state_space = self.dynamics.state_space
+
+        # Try new API first
+        if hasattr(state_space, 'sample_uniform'):
+            return state_space.sample_uniform(n)
+
+        # Fallback for old API - manually implement uniform sampling
+        import torch
+        uniform_samples = torch.rand(n, state_space.dim)
+        samples = state_space.lower + uniform_samples * (state_space.upper - state_space.lower)
+        return samples
+
     def compute_critic_loss(
         self,
         initial_states: Tensor,
@@ -228,7 +246,7 @@ class ModelBasedActorCritic:
 
         # Sample initial states if not provided
         if initial_states is None:
-            initial_states = self.dynamics.state_space.sample_uniform(n)
+            initial_states = self._sample_initial_states(n)
         else:
             initial_states = initial_states[:n]
 
@@ -295,7 +313,7 @@ class ModelBasedActorCritic:
 
     def evaluate(self, n_episodes: int = 50) -> Dict[str, float]:
         """Evaluate current policy on fresh trajectories."""
-        initial_states = self.dynamics.state_space.sample_uniform(n_episodes)
+        initial_states = self._sample_initial_states(n_episodes)
         with torch.no_grad():
             trajectories = self.simulator.rollout(self.ac.actor, initial_states)
         return {
