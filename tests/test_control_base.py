@@ -4,7 +4,7 @@ Unit tests for control/base.py - ControlSpec class.
 
 import torch
 from macro_rl.control.base import ControlSpec
-
+import pytest
 
 def test_control_spec_initialization():
     """Test ControlSpec initialization and validation."""
@@ -118,3 +118,6 @@ def test_control_spec_clip_batched():
     assert torch.all(clipped[..., 0] <= 1.0)
     assert torch.all(clipped[..., 1] >= -1.0)
     assert torch.all(clipped[..., 1] <= 1.0)
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
