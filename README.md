@@ -1,6 +1,13 @@
 # MacroRL: Model-Based RL for Continuous-Time Finance
 
-A Python library for solving continuous-time corporate finance models using **model-based reinforcement learning**. This project implements the GHM (D'ecamps et al.) equity management model using known dynamics to achieve superior sample efficiency and convergence.
+[![Documentation Status](https://readthedocs.org/projects/ghm-rl/badge/?version=latest)](https://ghm-rl.readthedocs.io/en/latest/?badge=latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-1.12+-red.svg)](https://pytorch.org/)
+
+A Python library for solving continuous-time corporate finance models using **model-based reinforcement learning**. This project implements the GHM (Gârleanu-Hackbarth-Morellec) equity management model using known dynamics to achieve superior sample efficiency and convergence.
+
+📖 **[Full Documentation](https://ghm-rl.readthedocs.io/)** | 🚀 **[Quick Start](#quick-start)** | 📚 **[Tutorials](https://ghm-rl.readthedocs.io/en/latest/tutorials/index.html)** | 📖 **[API Reference](https://ghm-rl.readthedocs.io/en/latest/api/index.html)**
 
 ## What Changed: From Model-Free to Model-Based
 
@@ -260,13 +267,44 @@ All operations support `(batch, ...)` dimensions for GPU efficiency and Monte Ca
 
 ---
 
+## Documentation
+
+Complete documentation is available at **[https://ghm-rl.readthedocs.io](https://ghm-rl.readthedocs.io)**
+
+### Documentation Sections
+
+- **[Getting Started](https://ghm-rl.readthedocs.io/en/latest/getting_started.html)**: Installation and quick start guide
+- **[Tutorials](https://ghm-rl.readthedocs.io/en/latest/tutorials/index.html)**: Step-by-step tutorials
+- **[API Reference](https://ghm-rl.readthedocs.io/en/latest/api/index.html)**: Complete API documentation
+- **[Examples](https://ghm-rl.readthedocs.io/en/latest/examples.html)**: Working examples and use cases
+- **[Core Concepts](https://ghm-rl.readthedocs.io/en/latest/concepts.html)**: Theoretical foundations
+
+### Building Documentation Locally
+
+```bash
+cd docs
+pip install -r requirements.txt
+make html
+```
+
+View the built documentation:
+
+```bash
+# Linux/Mac
+open build/html/index.html
+
+# Or use Python's built-in server
+cd build/html && python -m http.server
+```
+
 ## Contributing
 
-See detailed implementation guides in each module's `README.md`:
-- `macro_rl/simulation/README.md` - Simulation engine details
-- `macro_rl/control/README.md` - Control specification and masking
-- `macro_rl/rewards/README.md` - Reward function design
-- `macro_rl/solvers/README.md` - Algorithm comparisons
+We welcome contributions! Please see the **[Contributing Guide](https://ghm-rl.readthedocs.io/en/latest/contributing.html)** for details on:
+
+- Setting up development environment
+- Code style and testing guidelines
+- Submitting pull requests
+- Documentation standards
 
 ---
 
