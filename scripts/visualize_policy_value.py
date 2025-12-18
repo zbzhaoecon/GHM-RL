@@ -25,7 +25,6 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from macro_rl.core.state_space import StateSpace
-from macro_rl.control.ghm_control import GHMControl
 from macro_rl.dynamics.ghm_equity import GHMDynamics
 from macro_rl.networks.actor_critic import ActorCritic
 
