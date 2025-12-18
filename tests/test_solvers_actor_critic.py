@@ -46,9 +46,7 @@ def test_actor_critic_shared_layers(simple_setup):
         state_dim=state_dim,
         action_dim=action_dim,
         shared_layers=1,
-        shared_hidden_dim=32,
-        actor_hidden_dim=16,
-        critic_hidden_dim=16,
+        hidden_dims=[32, 16],  # First layer (32) is shared, second layer (16) for actor/critic
         action_bounds=(control_spec.lower, control_spec.upper),
     )
 
@@ -102,8 +100,7 @@ def test_actor_critic_no_shared_layers(simple_setup):
         state_dim=state_dim,
         action_dim=action_dim,
         shared_layers=0,  # No shared layers
-        actor_hidden_dim=16,
-        critic_hidden_dim=16,
+        hidden_dims=[16],  # Single hidden layer for both actor and critic
         action_bounds=(control_spec.lower, control_spec.upper),
     )
 
@@ -143,9 +140,7 @@ def test_actor_critic_reinforce(simple_setup):
         state_dim=state_dim,
         action_dim=action_dim,
         shared_layers=1,
-        shared_hidden_dim=32,
-        actor_hidden_dim=16,
-        critic_hidden_dim=16,
+        hidden_dims=[32, 16],  # First layer (32) is shared, second layer (16) for actor/critic
         action_bounds=(control_spec.lower, control_spec.upper),
     )
 
@@ -180,9 +175,7 @@ def test_actor_critic_td_loss(simple_setup):
         state_dim=state_dim,
         action_dim=action_dim,
         shared_layers=1,
-        shared_hidden_dim=32,
-        actor_hidden_dim=16,
-        critic_hidden_dim=16,
+        hidden_dims=[32, 16],  # First layer (32) is shared, second layer (16) for actor/critic
         action_bounds=(control_spec.lower, control_spec.upper),
     )
 
@@ -214,9 +207,7 @@ def test_actor_critic_evaluate(simple_setup):
         state_dim=state_dim,
         action_dim=action_dim,
         shared_layers=1,
-        shared_hidden_dim=32,
-        actor_hidden_dim=16,
-        critic_hidden_dim=16,
+        hidden_dims=[32, 16],  # First layer (32) is shared, second layer (16) for actor/critic
         action_bounds=(control_spec.lower, control_spec.upper),
     )
 
@@ -248,6 +239,7 @@ def test_actor_critic_with_custom_gamma(simple_setup):
         state_dim=state_dim,
         action_dim=action_dim,
         shared_layers=1,
+        hidden_dims=[64],  # Single shared layer
         action_bounds=(control_spec.lower, control_spec.upper),
     )
 
@@ -277,9 +269,7 @@ def test_actor_critic_optimizer_updates_all_params(simple_setup):
         state_dim=state_dim,
         action_dim=action_dim,
         shared_layers=1,
-        shared_hidden_dim=32,
-        actor_hidden_dim=16,
-        critic_hidden_dim=16,
+        hidden_dims=[32, 16],  # First layer (32) is shared, second layer (16) for actor/critic
         action_bounds=(control_spec.lower, control_spec.upper),
     )
 
@@ -296,8 +286,8 @@ def test_actor_critic_optimizer_updates_all_params(simple_setup):
     # Store initial parameters
     initial_actor_params = [p.clone() for p in ac.actor.parameters()]
     initial_critic_params = [p.clone() for p in ac.critic.parameters()]
-    if ac.shared_trunk is not None:
-        initial_shared_params = [p.clone() for p in ac.shared_trunk.parameters()]
+    if ac.shared is not None:
+        initial_shared_params = [p.clone() for p in ac.shared.parameters()]
 
     # Run one training step
     solver.train_step(n_samples=8)
@@ -320,9 +310,9 @@ def test_actor_critic_optimizer_updates_all_params(simple_setup):
     assert critic_changed, "Critic parameters should be updated"
 
     # If there's a shared trunk, it should also be updated
-    if ac.shared_trunk is not None:
+    if ac.shared is not None:
         shared_changed = False
-        for p_initial, p_current in zip(initial_shared_params, ac.shared_trunk.parameters()):
+        for p_initial, p_current in zip(initial_shared_params, ac.shared.parameters()):
             if not torch.allclose(p_initial, p_current):
                 shared_changed = True
                 break
@@ -337,6 +327,7 @@ def test_actor_critic_gradient_clipping(simple_setup):
         state_dim=state_dim,
         action_dim=action_dim,
         shared_layers=1,
+        hidden_dims=[64],  # Single shared layer
         action_bounds=(control_spec.lower, control_spec.upper),
     )
 

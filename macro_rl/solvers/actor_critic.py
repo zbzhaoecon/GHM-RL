@@ -76,10 +76,10 @@ class ModelBasedActorCritic:
 
         # Simulators
         self.simulator = TrajectorySimulator(
-            dynamics, control_spec, reward_fn, dt, T, gamma=self.gamma
+            dynamics, control_spec, reward_fn, dt, T
         )
         self.diff_simulator = DifferentiableSimulator(
-            dynamics, control_spec, reward_fn, dt, T, gamma=self.gamma
+            dynamics, control_spec, reward_fn, dt, T
         )
 
     def compute_critic_loss(
