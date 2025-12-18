@@ -70,15 +70,20 @@ class DifferentiableSimulator:
             reward_fn: Reward function
             dt: Time step size
             T: Time horizon
-
-        TODO: Implement initialization
         """
+        import math
+
         self.dynamics = dynamics
         self.control_spec = control_spec
         self.reward_fn = reward_fn
-        self.dt = dt
-        self.T = T
-        self.max_steps = int(T / dt)
+        self.dt = float(dt)
+        self.T = float(T)
+
+        # Compute number of steps
+        steps = self.T / self.dt
+        self.max_steps = int(round(steps))
+        if not math.isclose(self.max_steps * self.dt, self.T, rel_tol=1e-6, abs_tol=1e-9):
+            raise ValueError(f"T={self.T} is not an integer multiple of dt={self.dt}.")
 
     def simulate(
         self,
@@ -111,14 +116,76 @@ class DifferentiableSimulator:
                 c. Step dynamics (differentiable)
             3. Compute discounted returns (differentiable)
             4. Return with gradient graph attached
-
-        TODO: Implement differentiable simulation
-        - Ensure all operations preserve gradients
-        - Use reparameterized action sampling
-        - Handle termination differentiably (soft masking)
-        - Compute returns with gradient flow
         """
-        raise NotImplementedError
+        import math
+
+        batch_size, state_dim = initial_states.shape
+        action_dim = self.control_spec.dim
+        device = initial_states.device
+
+        # Validate noise shape
+        assert noise.shape[0] == batch_size, "noise batch size mismatch"
+        assert noise.shape[1] == self.max_steps, "noise n_steps mismatch"
+
+        # Pre-allocate storage (keep gradients!)
+        if return_trajectory:
+            states = torch.zeros(batch_size, self.max_steps + 1, state_dim, device=device, dtype=initial_states.dtype)
+            actions_storage = torch.zeros(batch_size, self.max_steps, action_dim, device=device, dtype=initial_states.dtype)
+
+        state = initial_states
+        total_return = torch.zeros(batch_size, device=device, dtype=initial_states.dtype)
+        discount = 1.0
+
+        for t in range(self.max_steps):
+            # Reparameterized action sampling
+            # Assume policy has a method: sample_with_noise(state, noise) or reparameterize(state, noise)
+            if hasattr(policy, 'sample_with_noise'):
+                action = policy.sample_with_noise(state, noise[:, t, :action_dim])
+            elif hasattr(policy, 'reparameterize'):
+                action = policy.reparameterize(state, noise[:, t, :action_dim])
+            else:
+                # Fallback: assume policy.forward does reparameterization
+                action = policy(state, noise[:, t, :action_dim])
+
+            # Apply control masking (but keep gradients)
+            action = self.control_spec.apply_mask(action, state, self.dt)
+            action = self.control_spec.clip(action)
+
+            # Store if needed
+            if return_trajectory:
+                states[:, t, :] = state
+                actions_storage[:, t, :] = action
+
+            # Compute next state (differentiable)
+            next_state = self._differentiable_step(state, action, noise[:, t, :])
+
+            # Compute reward (differentiable)
+            reward = self.reward_fn.step_reward(state, action, next_state, self.dt)
+
+            # Soft termination masking
+            mask = self._soft_termination_mask(next_state)
+            reward = reward * mask
+
+            # Accumulate return
+            total_return = total_return + discount * reward
+            discount *= torch.exp(torch.tensor(-self.dynamics.discount_rate() * self.dt, device=device, dtype=initial_states.dtype))
+
+            # Update state
+            state = next_state
+
+        # Store final state if needed
+        if return_trajectory:
+            states[:, self.max_steps, :] = state
+
+        # Terminal reward (differentiable)
+        # For differentiable version, use soft mask
+        terminal_mask = 1.0 - self._soft_termination_mask(state)  # 1 if terminated
+        terminal_reward = self.reward_fn.terminal_reward(state, terminal_mask)
+        total_return = total_return + discount * terminal_reward
+
+        if return_trajectory:
+            return total_return, states, actions_storage
+        return total_return
 
     def _differentiable_step(
         self,
@@ -136,13 +203,18 @@ class DifferentiableSimulator:
 
         Returns:
             Next state (batch, state_dim) with gradients
-
-        TODO: Implement differentiable step
-        - Compute drift(state, action)
-        - Compute diffusion(state)
-        - Apply Euler-Maruyama with gradient tracking
         """
-        raise NotImplementedError
+        import math
+
+        # Compute drift and diffusion (differentiable)
+        drift = self.dynamics.drift(state, action)
+        diffusion = self.dynamics.diffusion(state)
+
+        # Euler-Maruyama step (differentiable)
+        sqrt_dt = math.sqrt(self.dt)
+        next_state = state + drift * self.dt + diffusion * sqrt_dt * noise_step
+
+        return next_state
 
     def _soft_termination_mask(self, states: Tensor) -> Tensor:
         """
@@ -160,13 +232,17 @@ class DifferentiableSimulator:
         Example:
             Hard: mask = (c > 0).float()
             Soft: mask = torch.sigmoid(α * c)  # Smooth transition
-
-        TODO: Implement soft masking
-        - Use sigmoid or tanh for smoothness
-        - Tune temperature parameter α
-        - Ensure mask → 1 for valid states, → 0 for terminated
         """
-        raise NotImplementedError
+        # For GHM model: soft termination based on cash level
+        # Cash is the first state component
+        # Use sigmoid with temperature parameter for smooth transition
+        alpha = 10.0  # Temperature parameter (higher = sharper transition)
+        c = states[:, 0]
+
+        # sigmoid(α * c) → 1 for c >> 0, → 0 for c << 0
+        mask = torch.sigmoid(alpha * c)
+
+        return mask
 
     def compute_gradient(
         self,
@@ -188,11 +264,19 @@ class DifferentiableSimulator:
             noise: Pre-sampled noise (batch, n_steps, noise_dim)
 
         Returns:
-            Gradient tensor
-
-        TODO: Implement gradient computation
-        - Call simulate() with gradient tracking
-        - Use torch.autograd.grad() to compute ∇_θ R
-        - Return gradient w.r.t. policy parameters
+            Gradient tensor (concatenated gradients of all parameters)
         """
-        raise NotImplementedError
+        # Simulate with gradient tracking
+        returns = self.simulate(policy, initial_states, noise, return_trajectory=False)
+
+        # Compute mean return (objective to maximize)
+        objective = returns.mean()
+
+        # Compute gradients w.r.t. policy parameters
+        policy_params = list(policy.parameters())
+        gradients = torch.autograd.grad(objective, policy_params, create_graph=False)
+
+        # Concatenate gradients into single tensor
+        grad_flat = torch.cat([g.flatten() for g in gradients])
+
+        return grad_flat

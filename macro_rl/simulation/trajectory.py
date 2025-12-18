@@ -45,11 +45,18 @@ class TrajectoryBatch:
 
     def __post_init__(self):
         """Validate trajectory batch dimensions."""
-        # TODO: Add validation
-        # - Check states.shape[0] == actions.shape[0] (batch size)
-        # - Check states.shape[1] == actions.shape[1] + 1 (n_steps)
-        # - Check all batch dimensions match
-        pass
+        batch_size = self.states.shape[0]
+        n_steps_states = self.states.shape[1] - 1
+
+        assert self.actions.shape[0] == batch_size, "actions batch size mismatch"
+        assert self.rewards.shape[0] == batch_size, "rewards batch size mismatch"
+        assert self.masks.shape[0] == batch_size, "masks batch size mismatch"
+        assert self.returns.shape[0] == batch_size, "returns batch size mismatch"
+        assert self.terminal_rewards.shape[0] == batch_size, "terminal_rewards batch size mismatch"
+
+        assert self.actions.shape[1] == n_steps_states, "actions n_steps mismatch"
+        assert self.rewards.shape[1] == n_steps_states, "rewards n_steps mismatch"
+        assert self.masks.shape[1] == n_steps_states, "masks n_steps mismatch"
 
     @property
     def batch_size(self) -> int:
@@ -70,10 +77,15 @@ class TrajectoryBatch:
 
         Returns:
             TrajectoryBatch on target device
-
-        TODO: Implement device transfer
         """
-        raise NotImplementedError
+        return TrajectoryBatch(
+            states=self.states.to(device),
+            actions=self.actions.to(device),
+            rewards=self.rewards.to(device),
+            masks=self.masks.to(device),
+            returns=self.returns.to(device),
+            terminal_rewards=self.terminal_rewards.to(device),
+        )
 
 
 class TrajectorySimulator:
@@ -126,13 +138,24 @@ class TrajectorySimulator:
             dt: Time step size
             T: Time horizon
             integrator: SDE integrator (defaults to Euler-Maruyama)
-
-        TODO: Implement initialization
-        - Store all components
-        - Compute max_steps = int(T / dt)
-        - Initialize default integrator if not provided
         """
-        raise NotImplementedError
+        import math
+        from macro_rl.simulation.sde import SDEIntegrator
+
+        self.dynamics = dynamics
+        self.control_spec = control_spec
+        self.reward_fn = reward_fn
+        self.dt = float(dt)
+        self.T = float(T)
+
+        # Compute number of steps
+        steps = self.T / self.dt
+        self.max_steps = int(round(steps))
+        if not math.isclose(self.max_steps * self.dt, self.T, rel_tol=1e-6, abs_tol=1e-9):
+            raise ValueError(f"T={self.T} is not an integer multiple of dt={self.dt}.")
+
+        # Initialize integrator
+        self.integrator = integrator if integrator is not None else SDEIntegrator(scheme="euler")
 
     def rollout(
         self,
@@ -161,14 +184,106 @@ class TrajectorySimulator:
                 e. Check termination condition
             3. Compute discounted returns
             4. Return TrajectoryBatch
-
-        TODO: Implement trajectory rollout
-        - Handle action masking properly
-        - Support early termination (e.g., c ≤ 0)
-        - Compute discounted returns correctly
-        - Handle batch dimensions consistently
         """
-        raise NotImplementedError
+        import math
+
+        batch_size, state_dim = initial_states.shape
+        action_dim = self.control_spec.dim
+        device = initial_states.device
+
+        # Pre-allocate storage
+        states = torch.zeros(batch_size, self.max_steps + 1, state_dim, device=device)
+        actions = torch.zeros(batch_size, self.max_steps, action_dim, device=device)
+        rewards = torch.zeros(batch_size, self.max_steps, device=device)
+        masks = torch.ones(batch_size, self.max_steps, device=device)
+
+        # Initialize
+        states[:, 0, :] = initial_states
+
+        # Generate or use provided noise
+        if noise is None:
+            noise = torch.randn(batch_size, self.max_steps, state_dim, device=device)
+        else:
+            assert noise.shape == (batch_size, self.max_steps, state_dim), (
+                f"noise must have shape ({batch_size}, {self.max_steps}, {state_dim}), got {noise.shape}"
+            )
+            noise = noise.to(device)
+
+        # Track which trajectories are still active
+        active = torch.ones(batch_size, dtype=torch.bool, device=device)
+
+        # No gradients for Monte Carlo rollout
+        with torch.no_grad():
+            for t in range(self.max_steps):
+                # Sample action from policy
+                actions[:, t, :] = policy.act(states[:, t, :])
+
+                # Apply control masking (feasibility constraints)
+                actions[:, t, :] = self.control_spec.apply_mask(
+                    actions[:, t, :],
+                    states[:, t, :],
+                    self.dt
+                )
+
+                # Clip to bounds
+                actions[:, t, :] = self.control_spec.clip(actions[:, t, :])
+
+                # Compute drift and diffusion
+                drift = self.dynamics.drift(states[:, t, :], actions[:, t, :])
+                diffusion = self.dynamics.diffusion(states[:, t, :])
+
+                # Step dynamics using integrator
+                states[:, t + 1, :] = self.integrator.step(
+                    states[:, t, :],
+                    drift,
+                    diffusion,
+                    self.dt,
+                    noise[:, t, :]
+                )
+
+                # Compute reward (step reward needs next_state for some reward functions)
+                rewards[:, t] = self.reward_fn.step_reward(
+                    states[:, t, :],
+                    actions[:, t, :],
+                    states[:, t + 1, :],
+                    self.dt
+                )
+
+                # Check termination
+                terminated = self._check_termination(states[:, t + 1, :])
+
+                # Update active mask
+                masks[:, t] = active.to(dtype=masks.dtype)
+
+                # Zero out rewards for terminated trajectories
+                rewards[:, t] = rewards[:, t] * masks[:, t]
+
+                # Update active status
+                active = active & (~terminated)
+
+                # Early exit if all terminated
+                if not active.any():
+                    # Set remaining masks to zero
+                    if t + 1 < self.max_steps:
+                        masks[:, t + 1:] = 0
+                    break
+
+        # Compute terminal rewards
+        terminal_mask = (~active).to(dtype=rewards.dtype)
+        terminal_rewards = self.reward_fn.terminal_reward(states[:, -1, :], terminal_mask)
+
+        # Compute discounted returns
+        discount_rate = self.dynamics.discount_rate()
+        returns = self._compute_returns(rewards, terminal_rewards, masks, discount_rate)
+
+        return TrajectoryBatch(
+            states=states,
+            actions=actions,
+            rewards=rewards,
+            masks=masks,
+            returns=returns,
+            terminal_rewards=terminal_rewards,
+        )
 
     def _compute_returns(
         self,
@@ -191,13 +306,23 @@ class TrajectorySimulator:
 
         Formula:
             R = Σ_t exp(-ρ·t·dt) · r_t · mask_t + exp(-ρ·T) · r_T
-
-        TODO: Implement discounted return computation
-        - Use continuous-time discounting: exp(-ρ·t·dt)
-        - Apply masks to handle early termination
-        - Add terminal reward with appropriate discount
         """
-        raise NotImplementedError
+        batch_size, n_steps = rewards.shape
+        device = rewards.device
+
+        returns = torch.zeros(batch_size, device=device)
+
+        # Compute discounted sum of per-step rewards
+        for t in range(n_steps):
+            discount = torch.exp(torch.tensor(-discount_rate * t * self.dt, device=device))
+            returns = returns + discount * rewards[:, t] * masks[:, t]
+
+        # Add terminal reward with appropriate discount
+        # Terminal time is n_steps * dt (or earlier if terminated)
+        terminal_discount = torch.exp(torch.tensor(-discount_rate * n_steps * self.dt, device=device))
+        returns = returns + terminal_discount * terminal_rewards
+
+        return returns
 
     def _check_termination(self, states: Tensor) -> Tensor:
         """
@@ -208,9 +333,7 @@ class TrajectorySimulator:
 
         Returns:
             Boolean tensor (batch,) indicating termination
-
-        TODO: Implement termination logic
-        - For GHM: terminate if c ≤ 0
-        - Make this configurable for different models
         """
-        raise NotImplementedError
+        # For GHM model: terminate if cash c ≤ 0
+        # Cash is the first state component
+        return states[:, 0] <= 0.0
