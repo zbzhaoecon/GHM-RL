@@ -96,8 +96,8 @@ def compute_policy_value_grid(ac: ActorCritic, state_space: StateSpace, n_points
         'actions_mean': actions_mean.numpy(),
         'actions_std': actions_std.numpy(),
         'values': values.numpy(),
-        'V_s': V_s.numpy().squeeze(),
-        'V_ss_diag': V_ss_diag.numpy().squeeze(),
+        'V_s': V_s.detach().numpy().squeeze(),
+        'V_ss_diag': V_ss_diag.detach().numpy().squeeze(),
     }
 
 
