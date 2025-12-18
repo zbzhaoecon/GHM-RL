@@ -48,8 +48,7 @@ def load_checkpoint(checkpoint_path: str):
         state_dim=state_dim,
         action_dim=action_dim,
         hidden_dims=hidden_dims,
-        shared_layers=shared_layers,
-        activation='relu'
+        shared_layers=shared_layers
     )
     ac.load_state_dict(actor_critic_state)
     ac.eval()
