@@ -119,7 +119,8 @@ def log_actor_critic_details(
         # Sample random states from a reasonable range
         # For GHM equity model, cash reserves typically in [0, 10]
         device = next(solver.ac.parameters()).device
-        states = torch.rand(n_samples, solver.ac.state_dim, device=device) * 10.0
+        state_dim = solver.dynamics.state_space.dim
+        states = torch.rand(n_samples, state_dim, device=device) * 10.0
 
         # Get policy outputs
         dist = solver.ac.actor(states)
@@ -158,8 +159,8 @@ def log_actor_critic_details(
 
             # Compute HJB residuals: dV/dt + H(x, dV/dx)
             # Approximate using finite differences
-            states_t = traj["states"][:, :-1].reshape(-1, solver.ac.state_dim)
-            states_tp1 = traj["states"][:, 1:].reshape(-1, solver.ac.state_dim)
+            states_t = traj["states"][:, :-1].reshape(-1, state_dim)
+            states_tp1 = traj["states"][:, 1:].reshape(-1, state_dim)
             rewards = traj["rewards"][:, :-1].reshape(-1)
 
             V_t = solver.ac.critic(states_t).squeeze(-1)
