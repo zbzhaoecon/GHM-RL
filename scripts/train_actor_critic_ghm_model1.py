@@ -118,7 +118,8 @@ def log_actor_critic_details(
     with torch.no_grad():
         # Sample random states from a reasonable range
         # For GHM equity model, cash reserves typically in [0, 10]
-        states = torch.rand(n_samples, solver.ac.state_dim, device=solver.device) * 10.0
+        device = next(solver.ac.parameters()).device
+        states = torch.rand(n_samples, solver.ac.state_dim, device=device) * 10.0
 
         # Get policy outputs
         dist = solver.ac.actor(states)
@@ -151,7 +152,7 @@ def log_actor_critic_details(
         writer.add_scalar("value/V_max", values.max().item(), step)
 
         # Log HJB residuals if using HJB loss
-        if "hjb" in solver.critic_loss:
+        if "hjb" in solver.critic_loss_type:
             # Sample a trajectory for HJB residual computation
             traj = solver.sample_trajectories(n_trajectories=min(32, n_samples))
 
@@ -317,7 +318,6 @@ def main():
         n_trajectories=config.n_trajectories,
         lr=config.lr,
         max_grad_norm=config.max_grad_norm,
-        device=device,
     )
 
     print(f"  Critic loss: {config.critic_loss}")
