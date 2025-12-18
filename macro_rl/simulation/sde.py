@@ -94,12 +94,13 @@ class SDEIntegrator:
 
         Returns:
             Next state
-
-        TODO: Implement Euler-Maruyama step
-        - Handle both scalar and diagonal diffusion
-        - Ensure proper broadcasting for batch dimensions
         """
-        raise NotImplementedError
+        import math
+        assert x.shape == drift.shape == diffusion.shape == noise.shape, (
+            "x, drift, diffusion, noise must have the same shape"
+        )
+        sqrt_dt = math.sqrt(dt)
+        return x + drift * dt + diffusion * sqrt_dt * noise
 
     def _milstein_step(
         self,
@@ -155,10 +156,29 @@ class SDEIntegrator:
 
         Returns:
             Trajectory states (batch, n_steps+1, state_dim)
-
-        TODO: Implement batched simulation
-        - Pre-allocate trajectory tensor for efficiency
-        - Handle optional pre-sampled noise (for reproducibility)
-        - Support early termination if needed
         """
-        raise NotImplementedError
+        batch_size, state_dim = x0.shape
+        device = x0.device
+
+        # Pre-allocate trajectory tensor
+        trajectory = torch.zeros(batch_size, n_steps + 1, state_dim, device=device, dtype=x0.dtype)
+        trajectory[:, 0, :] = x0
+
+        # Generate or use provided noise
+        if noise is None:
+            noise = torch.randn(batch_size, n_steps, state_dim, device=device, dtype=x0.dtype)
+        else:
+            assert noise.shape == (batch_size, n_steps, state_dim), (
+                f"noise must have shape ({batch_size}, {n_steps}, {state_dim}), got {noise.shape}"
+            )
+            noise = noise.to(device)
+
+        # Simulate trajectory
+        x = x0
+        for t in range(n_steps):
+            drift = drift_fn(x)
+            diffusion = diffusion_fn(x)
+            x = self.step(x, drift, diffusion, dt, noise[:, t, :])
+            trajectory[:, t + 1, :] = x
+
+        return trajectory

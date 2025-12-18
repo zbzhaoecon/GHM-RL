@@ -96,9 +96,29 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
             "c_max": self.p.c_max,
         }
 
-    def drift(self, x: Tensor) -> Tensor:
-        """μ_c(c) = α + c(r - λ - μ)"""
-        return self._drift_const + x * self._drift_slope
+    def drift(self, x: Tensor, action: Tensor = None) -> Tensor:
+        """
+        μ_c(c, a) = α + c(r - λ - μ) - a_L + a_E
+
+        Args:
+            x: State tensor (batch, state_dim)
+            action: Action tensor (batch, action_dim) with [:, 0] = a_L, [:, 1] = a_E
+                   If None, assumes zero control (uncontrolled dynamics)
+
+        Returns:
+            Drift (batch, state_dim)
+        """
+        # Base drift: α + c(r - λ - μ)
+        drift = self._drift_const + x * self._drift_slope
+
+        # Add control effects if actions provided
+        if action is not None:
+            assert action.shape[-1] == 2, "GHM actions must be 2D: (a_L, a_E)"
+            a_L = action[:, 0:1]  # Dividend payout (outflow)
+            a_E = action[:, 1:2]  # Equity issuance (inflow)
+            drift = drift - a_L + a_E
+
+        return drift
 
     def diffusion(self, x: Tensor) -> Tensor:
         """σ_c(c) = sqrt(σ_X²(1-ρ²) + (ρσ_X - cσ_A)²)"""
