@@ -290,3 +290,8 @@ class TestGaussianPolicy:
             # Bounds should also be on GPU
             assert policy_gpu.action_low.device.type == 'cuda'
             assert policy_gpu.action_high.device.type == 'cuda'
+
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
