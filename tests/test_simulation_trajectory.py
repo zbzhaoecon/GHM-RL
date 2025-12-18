@@ -25,7 +25,12 @@ def make_ghm_simulator(dt=0.01, T=0.1):
     params = GHMEquityParams()
     dynamics = GHMEquityDynamics(params)
     control_spec = GHMControlSpec()
-    reward_fn = GHMRewardFunction(params)
+    reward_fn = GHMRewardFunction(
+        discount_rate=params.r - params.mu,
+        issuance_cost=0.0,  # Using default for simplicity
+        liquidation_rate=params.omega,
+        liquidation_flow=params.alpha,
+    )
 
     simulator = TrajectorySimulator(
         dynamics=dynamics,
