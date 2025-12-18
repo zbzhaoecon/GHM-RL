@@ -257,10 +257,10 @@ def test_gradient_comparison_with_finite_diff():
     # Finite difference gradient
     fd_grad = (returns_plus - returns_minus) / (2 * eps)
 
-    # Compare first element of analytical gradient
-    # (corresponding to first parameter)
+    # Compare sum of analytical gradients for first parameter
+    # FD perturbs all elements uniformly, so it measures the sum of partial derivatives
     param_size = param.numel()
-    analytical_first_param_grad = analytical_grad[:param_size].mean()
+    analytical_first_param_grad = analytical_grad[:param_size].sum()
 
     # Allow some numerical error
     relative_error = abs(analytical_first_param_grad - fd_grad) / (abs(fd_grad) + 1e-8)
