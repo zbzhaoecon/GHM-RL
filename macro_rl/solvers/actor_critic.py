@@ -192,7 +192,7 @@ class ModelBasedActorCritic:
                     initial_states.shape[-1],
                     device=initial_states.device,
                 )
-            returns = self.diff_simulator.simulate(self.ac.actor, initial_states, noise)
+            returns = self.diff_simulator.simulate(self.ac, initial_states, noise)
             actor_loss = -returns.mean()
             losses["actor/return"] = float(returns.mean().item())
 
@@ -257,7 +257,7 @@ class ModelBasedActorCritic:
 
         # Non-differentiable rollouts for critic + REINFORCE
         with torch.no_grad():
-            trajectories = self.simulator.rollout(self.ac.actor, initial_states)
+            trajectories = self.simulator.rollout(self.ac, initial_states)
 
         metrics: Dict[str, float] = {}
 
@@ -315,7 +315,7 @@ class ModelBasedActorCritic:
         """Evaluate current policy on fresh trajectories."""
         initial_states = self._sample_initial_states(n_episodes)
         with torch.no_grad():
-            trajectories = self.simulator.rollout(self.ac.actor, initial_states)
+            trajectories = self.simulator.rollout(self.ac, initial_states)
         return {
             "return_mean": float(trajectories.returns.mean().item()),
             "return_std": float(trajectories.returns.std().item()),

@@ -108,3 +108,16 @@ class ActorCritic(nn.Module):
         value = self.critic(feat)
         log_prob, entropy = self.actor.log_prob_and_entropy(feat, action)
         return value, log_prob, entropy
+
+    def sample_with_noise(self, state: Tensor, noise: Tensor) -> Tensor:
+        """Reparameterized sampling with explicit noise (for differentiable simulation).
+
+        Args:
+            state: State tensor
+            noise: Noise tensor for reparameterization
+
+        Returns:
+            action: Sampled action
+        """
+        feat = self._features(state)
+        return self.actor.sample_with_noise(feat, noise)
