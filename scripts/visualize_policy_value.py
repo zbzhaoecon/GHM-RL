@@ -117,7 +117,7 @@ def compute_hjb_residuals(results: dict, dynamics: GHMEquityDynamics, dt: float 
     with torch.no_grad():
         # Compute drift and diffusion
         drift = dynamics.drift(states, actions_t)  # [N, 1]
-        diffusion = dynamics.diffusion(states, actions_t)  # [N, 1]
+        diffusion = dynamics.diffusion(states)  # [N, 1]
 
         # Reward
         a_L = actions_t[:, 0:1]
