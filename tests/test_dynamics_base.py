@@ -319,3 +319,7 @@ class TestShapeConsistency:
         sigma_sq = model.diffusion_squared(x)
 
         assert sigma_sq.shape == x.shape
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
+
