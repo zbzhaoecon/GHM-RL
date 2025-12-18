@@ -44,11 +44,19 @@ def load_checkpoint(checkpoint_path: str):
     hidden_dims = config.get('hidden_dims', [256, 256])
     shared_layers = config.get('shared_layers', 1)
 
+    # Check if action bounds are in the checkpoint
+    action_bounds = None
+    if 'actor.action_low' in actor_critic_state and 'actor.action_high' in actor_critic_state:
+        action_low = actor_critic_state['actor.action_low']
+        action_high = actor_critic_state['actor.action_high']
+        action_bounds = (action_low, action_high)
+
     ac = ActorCritic(
         state_dim=state_dim,
         action_dim=action_dim,
         hidden_dims=hidden_dims,
-        shared_layers=shared_layers
+        shared_layers=shared_layers,
+        action_bounds=action_bounds
     )
     ac.load_state_dict(actor_critic_state)
     ac.eval()
@@ -109,7 +117,7 @@ def compute_hjb_residuals(results: dict, dynamics: GHMEquityDynamics, dt: float 
     with torch.no_grad():
         # Compute drift and diffusion
         drift = dynamics.drift(states, actions_t)  # [N, 1]
-        diffusion = dynamics.diffusion(states, actions_t)  # [N, 1]
+        diffusion = dynamics.diffusion(states)  # [N, 1]
 
         # Reward
         a_L = actions_t[:, 0:1]
