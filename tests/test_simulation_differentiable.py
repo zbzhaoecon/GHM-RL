@@ -200,21 +200,27 @@ def test_differentiable_step():
     state_dim = dynamics.state_space.dim
     action_dim = control_spec.dim
 
+    # Create leaf tensors with gradients
     state = torch.ones(batch, state_dim, requires_grad=True)
-    action = torch.ones(batch, action_dim, requires_grad=True) * 0.1
+    action_raw = torch.ones(batch, action_dim, requires_grad=True) * 0.1
     noise = torch.randn(batch, state_dim)
+
+    # Apply masking/clipping (creates non-leaf tensors)
+    action = control_spec.apply_mask(action_raw, state, dt)
+    action = control_spec.clip(action)
 
     next_state = simulator._differentiable_step(state, action, noise)
 
     # Next state should have gradients
     assert next_state.requires_grad
 
-    # Test gradient flow
+    # Test gradient flow back to leaf tensors
     loss = next_state.sum()
     loss.backward()
 
-    assert state.grad is not None
-    assert action.grad is not None
+    # Check that gradients flow back to the original leaf tensors
+    assert state.grad is not None, "Gradients should flow to state"
+    assert action_raw.grad is not None, "Gradients should flow to action through masking/clipping"
 
 
 def test_gradient_comparison_with_finite_diff():

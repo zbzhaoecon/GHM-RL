@@ -134,7 +134,10 @@ class DifferentiableSimulator:
 
         state = initial_states
         total_return = torch.zeros(batch_size, device=device, dtype=initial_states.dtype)
-        discount = 1.0
+
+        # Compute discount factor once (avoid creating tensor in loop)
+        discount_factor = torch.exp(torch.tensor(-self.dynamics.discount_rate() * self.dt, device=device, dtype=initial_states.dtype))
+        discount = torch.tensor(1.0, device=device, dtype=initial_states.dtype)
 
         for t in range(self.max_steps):
             # Reparameterized action sampling
@@ -168,7 +171,8 @@ class DifferentiableSimulator:
 
             # Accumulate return
             total_return = total_return + discount * reward
-            discount *= torch.exp(torch.tensor(-self.dynamics.discount_rate() * self.dt, device=device, dtype=initial_states.dtype))
+            # CRITICAL: Use non-inplace operation to preserve gradient graph
+            discount = discount * discount_factor
 
             # Update state
             state = next_state
