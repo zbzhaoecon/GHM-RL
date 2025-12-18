@@ -7,6 +7,7 @@ from macro_rl.simulation.trajectory import TrajectorySimulator, TrajectoryBatch
 from macro_rl.control.ghm_control import GHMControlSpec
 from macro_rl.rewards.ghm_rewards import GHMRewardFunction
 from macro_rl.dynamics.ghm_equity import GHMEquityDynamics, GHMEquityParams
+import pytest
 
 
 class RandomPolicy:
@@ -210,3 +211,7 @@ def test_check_termination():
 
     assert not terminated_pos.any(), "Positive cash should not terminate"
     assert terminated_neg.all(), "Non-positive cash should terminate"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
