@@ -82,8 +82,9 @@ def compute_policy_value_grid(ac: ActorCritic, state_space: StateSpace, n_points
         # Get value estimates
         values = ac.evaluate(states).squeeze()
 
-        # Get policy distribution parameters
-        dist = ac.actor.get_distribution(states)
+        # Get policy distribution parameters (need to pass through shared features)
+        feat = ac._features(states)
+        dist = ac.actor.get_distribution(feat)
         actions_std = dist.stddev
 
         # Get value gradients and Hessian diagonal (for HJB residuals)
@@ -141,7 +142,8 @@ def sample_action_distributions(ac: ActorCritic, states_to_sample: np.ndarray, n
     states = torch.tensor(states_to_sample, dtype=torch.float32)
 
     with torch.no_grad():
-        dist = ac.actor.get_distribution(states)
+        feat = ac._features(states)
+        dist = ac.actor.get_distribution(feat)
         action_samples = dist.sample((n_samples,))  # [n_samples, n_states, action_dim]
 
     return action_samples.numpy()
