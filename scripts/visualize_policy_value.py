@@ -85,7 +85,8 @@ def compute_policy_value_grid(ac: ActorCritic, state_space: StateSpace, n_points
         # Get policy distribution parameters (need to pass through shared features)
         feat = ac._features(states)
         mean, log_std = ac.actor._get_mean_log_std(feat)
-        actions_std = log_std.exp()
+        # log_std is state-independent, so expand it to match batch size
+        actions_std = log_std.exp().expand_as(mean)
 
     # Get value gradients and Hessian diagonal (for HJB residuals)
     # Note: This requires gradients enabled, so it's outside the no_grad context
