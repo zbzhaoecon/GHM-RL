@@ -122,24 +122,20 @@ def log_actor_critic_details(
         state_dim = solver.dynamics.state_space.dim
         states = torch.rand(n_samples, state_dim, device=device) * 10.0
 
-        # Pass states through shared trunk if present
+        # Sample actions using the actor
+        actions = solver.ac.act(states, deterministic=False)
+
+        # Evaluate the sampled state-action pairs
+        values, log_probs, entropy = solver.ac.evaluate_actions(states, actions)
+
+        # Get log_std from actor for monitoring
         features = solver.ac._features(states)
-
-        # Get policy distribution and sample actions
-        dist = solver.ac.actor.get_distribution(features)
-        actions = dist.sample()
-        log_probs = dist.log_prob(actions).sum(dim=-1)
-        entropy = dist.entropy().sum(dim=-1)
-
-        # Get value predictions
-        values = solver.ac.critic(features).squeeze(-1)
+        mean, log_std = solver.ac.actor._get_mean_log_std(features)
 
         # Log policy statistics
-        if hasattr(dist, 'scale'):
-            log_stds = torch.log(dist.scale)
-            writer.add_scalar("policy/log_std_mean", log_stds.mean().item(), step)
-            writer.add_scalar("policy/log_std_max", log_stds.max().item(), step)
-            writer.add_scalar("policy/log_std_min", log_stds.min().item(), step)
+        writer.add_scalar("policy/log_std_mean", log_std.mean().item(), step)
+        writer.add_scalar("policy/log_std_max", log_std.max().item(), step)
+        writer.add_scalar("policy/log_std_min", log_std.min().item(), step)
 
         writer.add_histogram("policy/actions", actions, step)
         writer.add_scalar("policy/actions_mean", actions.mean().item(), step)
@@ -149,7 +145,7 @@ def log_actor_critic_details(
         writer.add_scalar("policy/logp_sampled_mean", log_probs.mean().item(), step)
 
         # Log value statistics
-        writer.add_histogram("value/V_sampled", values, step)
+        writer.add_histogram("value/V_sampled", values.squeeze(-1), step)
         writer.add_scalar("value/V_mean", values.mean().item(), step)
         writer.add_scalar("value/V_std", values.std().item(), step)
         writer.add_scalar("value/V_min", values.min().item(), step)
