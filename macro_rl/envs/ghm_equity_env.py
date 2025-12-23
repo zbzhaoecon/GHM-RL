@@ -22,15 +22,15 @@ class GHMEquityEnv(ContinuousTimeEnv):
     Gymnasium environment for 1D GHM equity model.
 
     State: c ∈ [0, c_max] (cash/earnings ratio)
-    Action: a ∈ [0, a_max] (dividend payout rate)
+    Action: [dividend_amount, equity_gross_amount] (impulse controls)
 
-    Dynamics: dc = (μ_c(c) - a) dt + σ_c(c) dW
-    Reward: a * dt (dividends paid)
+    Dynamics: dc = μ_c(c) dt + σ_c(c) dW - dL + dE/p - φ·𝟙(dE>0)
+    Reward: dividend_amount - equity_gross_amount (net payout to shareholders)
     Termination: c ≤ 0 (liquidation)
 
     The agent learns to balance:
-    - Paying dividends (immediate reward)
-    - Retaining cash (avoid liquidation)
+    - Paying dividends (positive reward)
+    - Avoiding equity issuance (negative reward, dilution)
     - Managing stochastic cash flows
 
     Optimal policy approximates barrier control: pay excess above c*.
@@ -46,8 +46,8 @@ class GHMEquityEnv(ContinuousTimeEnv):
         params: GHM model parameters (default: Table 1 values)
         dt: Time discretization step
         max_steps: Maximum episode length
-        a_max: Maximum dividend rate (action upper bound)
-        liquidation_penalty: Penalty when c hits 0
+        dividend_max: Maximum dividend amount per step
+        equity_max: Maximum equity issuance amount per step
         seed: Random seed
     """
 
@@ -56,8 +56,8 @@ class GHMEquityEnv(ContinuousTimeEnv):
         params: Optional[GHMEquityParams] = None,
         dt: float = 0.01,
         max_steps: int = 1000,
-        a_max: float = 10.0,
-        liquidation_penalty: float = 5.0,
+        dividend_max: float = 2.0,
+        equity_max: float = 2.0,
         seed: Optional[int] = None,
     ):
         """
@@ -67,26 +67,47 @@ class GHMEquityEnv(ContinuousTimeEnv):
             params: GHM model parameters (default: Table 1 values)
             dt: Time discretization step (default: 0.01)
             max_steps: Maximum episode length (default: 1000, T=10)
-            a_max: Maximum dividend rate (default: 10.0)
-            liquidation_penalty: Penalty when c hits 0 (default: 5.0)
+            dividend_max: Maximum dividend amount (default: 2.0)
+            equity_max: Maximum equity issuance amount (default: 2.0)
             seed: Random seed for reproducibility
         """
         # Create dynamics
         dynamics = GHMEquityDynamics(params)
         super().__init__(dynamics, dt, max_steps, seed)
 
-        self.a_max = a_max
-        self.liquidation_penalty = liquidation_penalty
+        self.dividend_max = dividend_max
+        self.equity_max = equity_max
 
-        # Action space: dividend rate in [0, a_max]
+        # Action space: [dividend_amount, equity_gross_amount]
         self.action_space = spaces.Box(
-            low=np.array([0.0], dtype=np.float32),
-            high=np.array([a_max], dtype=np.float32),
+            low=np.array([0.0, 0.0], dtype=np.float32),
+            high=np.array([dividend_max, equity_max], dtype=np.float32),
             dtype=np.float32
         )
 
-        # Store dynamics for easy access
+        # Store dynamics and parameters for easy access
         self._dynamics = dynamics
+        self._params = dynamics.p
+        self._liquidated = False
+
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[dict] = None,
+    ) -> Tuple[np.ndarray, dict]:
+        """
+        Reset environment and liquidation flag.
+
+        Args:
+            seed: Random seed for reproducibility
+            options: Additional options
+
+        Returns:
+            Initial observation and info dictionary
+        """
+        self._liquidated = False
+        return super().reset(seed=seed, options=options)
 
     def _sample_initial_state(self) -> np.ndarray:
         """
@@ -106,46 +127,51 @@ class GHMEquityEnv(ContinuousTimeEnv):
 
     def _apply_action_and_evolve(self, action: np.ndarray) -> Tuple[np.ndarray, float]:
         """
-        Apply dividend action and evolve state.
+        Apply impulse controls then evolve via SDE.
 
-        Modified dynamics: dc = (μ_c(c) - a) dt + σ_c(c) dW
+        Order of operations:
+            1. Apply dividend payout (c decreases instantly)
+            2. Apply equity issuance (c increases instantly, with costs)
+            3. Evolve via uncontrolled SDE dynamics
 
         Args:
-            action: Dividend payout rate [a]
+            action: [dividend_amount, equity_gross_amount]
 
         Returns:
             new_state: Updated state [c']
-            reward: Immediate reward (dividends paid)
+            reward: Immediate reward (net payout to shareholders)
         """
-        # Current state as tensor (batch dimension for dynamics interface)
-        c = torch.tensor(self._state, dtype=torch.float32).unsqueeze(0)
+        c = float(self._state[0])
+        dividend = float(action[0])
+        equity_gross = float(action[1])
 
-        # Compute drift μ_c(c) (without action)
-        drift = self._dynamics.drift(c).numpy().flatten()
+        reward = 0.0
 
-        # Modify drift by subtracting dividend payout
-        # dc/dt = μ_c(c) - a
-        drift_modified = drift - action
+        # Step 1: Apply dividend (cannot pay more than available)
+        dividend_actual = min(dividend, max(c, 0.0))
+        c = c - dividend_actual
+        reward += dividend_actual  # Positive reward to shareholders
 
-        # Compute diffusion σ_c(c)
-        diffusion = self._dynamics.diffusion(c).numpy().flatten()
+        # Step 2: Apply equity issuance with costs
+        if equity_gross > 0:
+            net_proceeds = equity_gross / self._params.p - self._params.phi
+            net_proceeds = max(net_proceeds, 0.0)
+            c = c + net_proceeds
+            reward -= equity_gross  # Dilution cost (negative)
 
-        # Sample Brownian increment dW ~ N(0, dt)
-        dW = self.np_random.standard_normal(size=self._state.shape).astype(np.float32)
-        dW = dW * np.sqrt(self.dt)
+        # Step 3: Evolve via uncontrolled SDE
+        c_tensor = torch.tensor([[c]], dtype=torch.float32)
+        drift = self._dynamics.drift(c_tensor).item()
+        diffusion = self._dynamics.diffusion(c_tensor).item()
 
-        # Euler-Maruyama step: c' = c + (μ_c(c) - a)*dt + σ_c(c)*dW
-        new_state = self._state + drift_modified * self.dt + diffusion * dW
+        dW = self.np_random.standard_normal() * np.sqrt(self.dt)
+        c_new = c + drift * self.dt + diffusion * dW
 
-        # Clip to valid range [0, c_max]
-        # Note: We allow soft clipping here; liquidation is checked via termination
+        # Clip to bounds
         ss = self.dynamics.state_space
-        new_state = np.clip(new_state, ss.lower.numpy(), ss.upper.numpy())
+        c_new = np.clip(c_new, ss.lower.numpy()[0], ss.upper.numpy()[0])
 
-        # Reward = dividends paid this step
-        reward = float(action[0] * self.dt)
-
-        return new_state.astype(np.float32), reward
+        return np.array([c_new], dtype=np.float32), reward
 
     def _get_terminated(self) -> bool:
         """
@@ -156,17 +182,22 @@ class GHMEquityEnv(ContinuousTimeEnv):
         Returns:
             True if liquidated, False otherwise
         """
-        return self._state[0] <= 0.0
+        if self._state[0] <= 0.0:
+            self._liquidated = True
+            return True
+        return False
 
     def _get_terminal_reward(self) -> float:
         """
-        Apply liquidation penalty.
+        Liquidation value: ω·α/(r-μ)
+
+        This is POSITIVE - shareholders receive recovery value.
 
         Returns:
-            Negative penalty if liquidated, 0 otherwise
+            Positive liquidation value if liquidated, 0 otherwise
         """
         if self._state[0] <= 0.0:
-            return -self.liquidation_penalty
+            return self._dynamics.liquidation_value()
         return 0.0
 
     def get_expected_discount_factor(self) -> float:

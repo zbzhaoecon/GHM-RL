@@ -64,18 +64,21 @@ class TestGHMEquityEnvBasics:
 
     def test_action_space_valid(self):
         """Test that action space is properly configured."""
-        env = GHMEquityEnv(a_max=5.0)
+        env = GHMEquityEnv(dividend_max=3.0, equity_max=2.5)
 
-        # Check action space bounds
-        assert env.action_space.shape == (1,)
+        # Check action space bounds (2D: [dividend, equity])
+        assert env.action_space.shape == (2,)
         assert env.action_space.low[0] == 0.0
-        assert env.action_space.high[0] == 5.0
+        assert env.action_space.low[1] == 0.0
+        assert env.action_space.high[0] == 3.0
+        assert env.action_space.high[1] == 2.5
 
         # Sample actions should be valid
         for _ in range(10):
             action = env.action_space.sample()
             assert env.action_space.contains(action)
-            assert 0.0 <= action[0] <= 5.0
+            assert 0.0 <= action[0] <= 3.0
+            assert 0.0 <= action[1] <= 2.5
 
     def test_random_policy_completes_episode(self):
         """Test that random policy can complete an episode without errors."""
@@ -110,7 +113,7 @@ class TestGHMEquityEnvBasics:
         trajectory1 = [obs1.copy()]
 
         for _ in range(10):
-            action = np.array([1.0])  # Fixed action
+            action = np.array([0.1, 0.0])  # Fixed action: small dividend, no equity
             obs1, _, terminated, truncated, _ = env1.step(action)
             trajectory1.append(obs1.copy())
             if terminated or truncated:
@@ -122,7 +125,7 @@ class TestGHMEquityEnvBasics:
         trajectory2 = [obs2.copy()]
 
         for _ in range(10):
-            action = np.array([1.0])  # Fixed action
+            action = np.array([0.1, 0.0])  # Fixed action: small dividend, no equity
             obs2, _, terminated, truncated, _ = env2.step(action)
             trajectory2.append(obs2.copy())
             if terminated or truncated:
@@ -140,7 +143,7 @@ class TestGHMEquityEnvBasics:
         env.reset()
 
         for step in range(max_steps + 10):
-            action = np.array([0.1])  # Small action to avoid liquidation
+            action = np.array([0.05, 0.0])  # Small dividend, no equity issuance
             obs, reward, terminated, truncated, info = env.step(action)
 
             if truncated:
@@ -160,12 +163,12 @@ class TestGHMEquityEnvEconomics:
     """Test economic behavior and sanity checks."""
 
     def test_zero_action_follows_drift(self):
-        """Test that zero dividend action follows natural drift."""
+        """Test that zero action (no dividend, no equity) follows natural drift."""
         env = GHMEquityEnv(seed=42, max_steps=100)
         c0, _ = env.reset(options={"initial_state": np.array([1.0])})
 
-        # Take many steps with zero action
-        action = np.array([0.0])
+        # Take many steps with zero action (no dividend, no equity)
+        action = np.array([0.0, 0.0])
         changes = []
 
         for _ in range(50):
@@ -186,12 +189,12 @@ class TestGHMEquityEnvEconomics:
         assert mean_change > 0, f"Expected positive drift, got {mean_change}"
 
     def test_high_action_decreases_cash(self):
-        """Test that high dividend rate decreases cash on average."""
+        """Test that high dividend amount decreases cash on average."""
         env = GHMEquityEnv(seed=42, max_steps=100)
         env.reset(options={"initial_state": np.array([1.5])})
 
         # Take many steps with high dividend action
-        action = np.array([5.0])  # Large payout
+        action = np.array([0.5, 0.0])  # Large dividend payout, no equity
         changes = []
 
         for _ in range(20):
@@ -207,17 +210,17 @@ class TestGHMEquityEnvEconomics:
         # Should have some data
         assert len(changes) > 0
 
-        # On average, should decrease (high payout > drift)
+        # On average, should decrease (dividend payout > drift * dt)
         mean_change = np.mean(changes)
         assert mean_change < 0, f"Expected negative change with high dividend, got {mean_change}"
 
     def test_liquidation_terminates_episode(self):
         """Test that c <= 0 triggers termination."""
-        env = GHMEquityEnv(seed=42, liquidation_penalty=10.0)
+        env = GHMEquityEnv(seed=42)
         env.reset(options={"initial_state": np.array([0.1])})
 
         # Apply very high dividend to force liquidation
-        action = np.array([10.0])
+        action = np.array([1.0, 0.0])  # High dividend, no equity
 
         terminated = False
         for _ in range(100):
@@ -226,46 +229,52 @@ class TestGHMEquityEnvEconomics:
             if terminated:
                 # Check that state is at/below zero
                 assert obs[0] <= 1e-6  # Should be clamped to 0
-                # Check that penalty was applied
-                assert reward < 0  # Should include negative penalty
+                # Check that liquidation value was applied (should be positive)
+                # Note: reward includes the dividend from the last step
+                # The terminal reward is positive liquidation value
                 break
 
         # Should have terminated before max_steps
         assert terminated, "Expected liquidation but episode didn't terminate"
 
-    def test_reward_equals_dividend_paid(self):
-        """Test that reward matches a * dt."""
+    def test_reward_equals_net_payout(self):
+        """Test that reward matches dividend - equity issuance."""
         env = GHMEquityEnv(seed=42, dt=0.01)
         env.reset(options={"initial_state": np.array([1.0])})
 
-        dividend_rate = 2.0
-        action = np.array([dividend_rate])
+        dividend_amount = 0.1
+        equity_amount = 0.0
+        action = np.array([dividend_amount, equity_amount])
 
         obs, reward, terminated, truncated, info = env.step(action)
 
-        # Reward should be dividend_rate * dt (if not terminated)
+        # Reward should be dividend - equity (net payout to shareholders)
         if not terminated:
-            expected_reward = dividend_rate * env.dt
+            expected_reward = dividend_amount - equity_amount
             assert np.isclose(reward, expected_reward, atol=1e-6), \
                 f"Expected reward {expected_reward}, got {reward}"
 
-    def test_liquidation_penalty_applied(self):
-        """Test that liquidation penalty is correctly applied."""
-        penalty = 7.5
-        env = GHMEquityEnv(seed=42, liquidation_penalty=penalty)
+    def test_liquidation_value_applied(self):
+        """Test that liquidation value is correctly applied."""
+        env = GHMEquityEnv(seed=42)
         env.reset(options={"initial_state": np.array([0.05])})
 
         # Force liquidation
-        action = np.array([10.0])
+        action = np.array([1.0, 0.0])  # High dividend
 
         for _ in range(50):
             obs, reward, terminated, truncated, info = env.step(action)
 
             if terminated:
-                # Reward should include penalty: a*dt - penalty
-                # Since a*dt is small and penalty is large, should be very negative
-                assert reward < -penalty * 0.5, \
-                    f"Expected large negative reward with penalty, got {reward}"
+                # Terminal reward should include positive liquidation value
+                # Liquidation value = ω·α/(r-μ) = 0.55 * 0.18 / 0.02 = 4.95
+                expected_liquidation_value = env._dynamics.liquidation_value()
+                # Reward includes dividend from last step plus terminal reward
+                # Since we force immediate liquidation, reward should be positive
+                assert reward > 0, \
+                    f"Expected positive reward with liquidation value, got {reward}"
+                assert expected_liquidation_value > 0, \
+                    f"Expected positive liquidation value, got {expected_liquidation_value}"
                 break
 
         assert terminated, "Expected liquidation"
@@ -324,14 +333,15 @@ class TestGHMEquityEnvParameters:
         """Test environment with different dt values."""
         for dt in [0.001, 0.01, 0.1]:
             env = GHMEquityEnv(dt=dt)
-            env.reset()
+            env.reset(options={"initial_state": np.array([1.0])})
 
-            action = np.array([1.0])
+            dividend_amount = 0.1
+            action = np.array([dividend_amount, 0.0])
             obs, reward, terminated, truncated, info = env.step(action)
 
-            # Reward should scale with dt
+            # Reward should be dividend - equity (independent of dt for impulse controls)
             if not terminated:
-                expected_reward = 1.0 * dt
+                expected_reward = dividend_amount
                 assert np.isclose(reward, expected_reward, atol=1e-6)
 
 
@@ -359,7 +369,7 @@ class TestGymnasiumRegistration:
         # Reset and run to max steps
         env.reset()
         for step in range(1100):
-            action = np.array([0.1])  # Small action
+            action = np.array([0.05, 0.0])  # Small dividend, no equity
             obs, reward, terminated, truncated, info = env.step(action)
 
             if truncated or terminated:
@@ -374,20 +384,20 @@ class TestGymnasiumRegistration:
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
-    def test_action_array_vs_scalar(self):
-        """Test that environment handles both array and scalar actions."""
+    def test_action_array_vs_list(self):
+        """Test that environment handles both array and list actions."""
         env = GHMEquityEnv(seed=42)
         env.reset()
 
         # Test with array action
-        action_array = np.array([1.0])
+        action_array = np.array([0.1, 0.0])
         obs1, reward1, _, _, _ = env.step(action_array)
 
         # Reset to same state
         env.reset(seed=42)
 
         # Test with list (should be converted to array)
-        action_list = [1.0]
+        action_list = [0.1, 0.0]
         obs2, reward2, _, _, _ = env.step(action_list)
 
         # Should give same results
@@ -411,14 +421,14 @@ class TestEdgeCases:
         env = GHMEquityEnv()
 
         with pytest.raises(RuntimeError, match="Must call reset"):
-            env.step(np.array([1.0]))
+            env.step(np.array([0.1, 0.0]))
 
     def test_info_dict_contents(self):
         """Test that info dict contains expected keys."""
         env = GHMEquityEnv(seed=42)
         env.reset()
 
-        action = np.array([1.0])
+        action = np.array([0.1, 0.0])
         obs, reward, terminated, truncated, info = env.step(action)
 
         # Check info dict has expected keys
