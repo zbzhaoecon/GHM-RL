@@ -100,21 +100,29 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
 
     def drift(self, x: Tensor, action: Tensor = None) -> Tensor:
         """
-        Uncontrolled drift: μ_c(c) = α + c(r - λ - μ)
+        Drift with optional action influence for model-based training.
 
-        Controls are impulse (instantaneous jumps), not rates.
-        The action parameter is accepted for backward compatibility
-        with the training infrastructure, but is IGNORED.
+        For model-based training: μ_c(c, a) = α + c(r - λ - μ) - a_L + a_E
+        For Gym environment: action is ignored (impulse controls)
 
         Args:
             x: State tensor (batch, state_dim)
-            action: IGNORED - kept for backward compatibility only
+            action: Action tensor (batch, 2) with [:, 0] = a_L, [:, 1] = a_E
+                   If None, returns uncontrolled drift
 
         Returns:
             Drift (batch, state_dim)
         """
-        # Note: action is intentionally ignored - controls are impulse, not in drift
-        return self._drift_const + x * self._drift_slope
+        # Base drift: α + c(r - λ - μ)
+        drift = self._drift_const + x * self._drift_slope
+
+        # Add control effects if actions provided (for model-based training)
+        if action is not None and action.shape[-1] == 2:
+            a_L = action[:, 0:1]  # Dividend payout (outflow)
+            a_E = action[:, 1:2]  # Equity issuance (inflow)
+            drift = drift - a_L + a_E
+
+        return drift
 
     def diffusion(self, x: Tensor) -> Tensor:
         """σ_c(c) = sqrt(σ_X²(1-ρ²) + (ρσ_X - cσ_A)²)"""
