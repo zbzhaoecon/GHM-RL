@@ -98,19 +98,22 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
             "c_max": self.p.c_max,
         }
 
-    def drift(self, x: Tensor) -> Tensor:
+    def drift(self, x: Tensor, action: Tensor = None) -> Tensor:
         """
         Uncontrolled drift: μ_c(c) = α + c(r - λ - μ)
 
         Controls are impulse (instantaneous jumps), not rates.
-        They should NOT be included in the drift.
+        The action parameter is accepted for backward compatibility
+        with the training infrastructure, but is IGNORED.
 
         Args:
             x: State tensor (batch, state_dim)
+            action: IGNORED - kept for backward compatibility only
 
         Returns:
             Drift (batch, state_dim)
         """
+        # Note: action is intentionally ignored - controls are impulse, not in drift
         return self._drift_const + x * self._drift_slope
 
     def diffusion(self, x: Tensor) -> Tensor:
