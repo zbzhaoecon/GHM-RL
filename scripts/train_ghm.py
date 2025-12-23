@@ -1,9 +1,23 @@
 """
-Train SAC on GHM 1D equity model.
+Train SAC on GHM 1D equity model with impulse controls.
+
+This script trains a Soft Actor-Critic (SAC) agent on the GHM equity
+management environment. The agent learns to approximate the optimal
+barrier policy for dividend payments and equity issuance.
+
+Action space: 2D continuous
+  - action[0]: Dividend amount to pay out (≥ 0)
+  - action[1]: Gross equity amount to raise (≥ 0)
+
+The optimal policy should learn a barrier structure:
+  - High cash (c > c*): Pay dividends
+  - Low cash (c ≈ 0): Issue equity or liquidate
+  - Middle range: Do nothing (both actions ≈ 0)
 
 Usage:
     python scripts/train_ghm.py
-    python scripts/train_ghm.py --timesteps 100000 --output models/ghm_equity
+    python scripts/train_ghm.py --timesteps 1000000 --output models/ghm_equity
+    python scripts/train_ghm.py --timesteps 500000 --n-envs 8 --seed 42
 """
 
 import argparse
@@ -24,8 +38,8 @@ def make_env(seed: int = 0):
         env = GHMEquityEnv(
             dt=0.01,
             max_steps=1000,
-            a_max=10.0,
-            liquidation_penalty=5.0,
+            dividend_max=2.0,
+            equity_max=2.0,
         )
         env.reset(seed=seed)
         return Monitor(env)
@@ -51,9 +65,11 @@ def main():
 
     # Compute correct discount factor from environment
     # For continuous-time discounting: γ = exp(-ρ * dt) where ρ = r - μ
-    temp_env = GHMEquityEnv(dt=0.01, max_steps=1000, a_max=10.0, liquidation_penalty=5.0)
+    temp_env = GHMEquityEnv(dt=0.01, max_steps=1000, dividend_max=2.0, equity_max=2.0)
     gamma = temp_env.get_expected_discount_factor()
     print(f"\nUsing discount factor γ = {gamma:.6f} (from continuous-time rate ρ = r - μ)")
+    print(f"Action space: {temp_env.action_space} (2D: [dividend_amount, equity_gross_amount])")
+    print(f"Liquidation value: {temp_env._dynamics.liquidation_value():.4f}")
 
     # Callbacks
     eval_callback = EvalCallback(
