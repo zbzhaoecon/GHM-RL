@@ -34,10 +34,12 @@ class GHMEquityParams:
     # State bounds
     c_max: float = 2.0
 
-    # Control and reward parameters
-    omega: float = 0.8        # Liquidation recovery rate
-    p: float = 0.5            # Additional parameter (placeholder)
-    phi: float = 0.5          # Additional parameter (placeholder)
+    # Equity issuance costs (Table 1 from GHM_v2.pdf)
+    p: float = 1.06           # Proportional cost of equity issuance
+    phi: float = 0.002        # Fixed cost of equity issuance
+
+    # Liquidation parameters (Table 1)
+    omega: float = 0.55       # Liquidation recovery rate
 
     def __post_init__(self):
         """Compute derived parameters."""
@@ -96,29 +98,20 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
             "c_max": self.p.c_max,
         }
 
-    def drift(self, x: Tensor, action: Tensor = None) -> Tensor:
+    def drift(self, x: Tensor) -> Tensor:
         """
-        μ_c(c, a) = α + c(r - λ - μ) - a_L + a_E
+        Uncontrolled drift: μ_c(c) = α + c(r - λ - μ)
+
+        Controls are impulse (instantaneous jumps), not rates.
+        They should NOT be included in the drift.
 
         Args:
             x: State tensor (batch, state_dim)
-            action: Action tensor (batch, action_dim) with [:, 0] = a_L, [:, 1] = a_E
-                   If None, assumes zero control (uncontrolled dynamics)
 
         Returns:
             Drift (batch, state_dim)
         """
-        # Base drift: α + c(r - λ - μ)
-        drift = self._drift_const + x * self._drift_slope
-
-        # Add control effects if actions provided
-        if action is not None:
-            assert action.shape[-1] == 2, "GHM actions must be 2D: (a_L, a_E)"
-            a_L = action[:, 0:1]  # Dividend payout (outflow)
-            a_E = action[:, 1:2]  # Equity issuance (inflow)
-            drift = drift - a_L + a_E
-
-        return drift
+        return self._drift_const + x * self._drift_slope
 
     def diffusion(self, x: Tensor) -> Tensor:
         """σ_c(c) = sqrt(σ_X²(1-ρ²) + (ρσ_X - cσ_A)²)"""
@@ -134,3 +127,37 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
     def discount_rate(self) -> float:
         """r - μ"""
         return self._discount
+
+    def net_equity_proceeds(self, gross_amount: float) -> float:
+        """
+        Compute net cash from equity issuance.
+
+        Net proceeds = gross / p - φ  (if gross > 0)
+
+        Args:
+            gross_amount: Amount raised from investors
+
+        Returns:
+            Net cash added to firm (after costs)
+        """
+        if gross_amount <= 0:
+            return 0.0
+        return gross_amount / self.p.p - self.p.phi
+
+    def gross_equity_required(self, target_increase: float) -> float:
+        """
+        Compute gross equity needed to increase cash by target amount.
+
+        To add Δc to cash, must raise p(Δc + φ) from investors.
+
+        Args:
+            target_increase: Desired increase in cash
+
+        Returns:
+            Gross equity to raise (cost to existing shareholders)
+        """
+        return self.p.p * (target_increase + self.p.phi)
+
+    def liquidation_value(self) -> float:
+        """Return ω·α/(r-μ)"""
+        return self.p.liquidation_value

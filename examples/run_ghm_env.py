@@ -52,10 +52,10 @@ def run_random_policy(n_episodes=5, max_steps=200, seed=42):
             print(f"  Total reward: {episode_reward:.4f}")
 
 
-def run_fixed_policy(dividend_rate=1.0, n_episodes=3, max_steps=200, seed=42):
+def run_fixed_policy(dividend_amount=0.1, equity_amount=0.0, n_episodes=3, max_steps=200, seed=42):
     """Run episodes with fixed dividend policy."""
     print("\n" + "=" * 60)
-    print(f"Running GHM Equity Environment with Fixed Policy (a={dividend_rate})")
+    print(f"Running GHM Equity Environment with Fixed Policy (dividend={dividend_amount}, equity={equity_amount})")
     print("=" * 60)
 
     env = GHMEquityEnv(seed=seed, max_steps=max_steps)
@@ -71,7 +71,7 @@ def run_fixed_policy(dividend_rate=1.0, n_episodes=3, max_steps=200, seed=42):
         print(f"  Initial cash: c = {obs[0]:.4f}")
 
         for step in range(max_steps):
-            action = np.array([dividend_rate])
+            action = np.array([dividend_amount, equity_amount])
             obs, reward, terminated, truncated, info = env.step(action)
 
             trajectory.append(obs[0])
@@ -126,7 +126,14 @@ def test_determinism():
     print("=" * 60)
 
     seed = 123
-    action_sequence = [1.0, 0.5, 2.0, 0.1, 1.5]
+    # Action sequence: [dividend, equity] pairs
+    action_sequence = [
+        [0.1, 0.0],
+        [0.05, 0.0],
+        [0.2, 0.0],
+        [0.01, 0.0],
+        [0.15, 0.0]
+    ]
 
     # Run 1
     env1 = GHMEquityEnv(seed=seed)
@@ -134,7 +141,7 @@ def test_determinism():
     trajectory1 = [obs1[0]]
 
     for a in action_sequence:
-        obs, _, _, _, _ = env1.step(np.array([a]))
+        obs, _, _, _, _ = env1.step(np.array(a))
         trajectory1.append(obs[0])
 
     # Run 2
@@ -143,7 +150,7 @@ def test_determinism():
     trajectory2 = [obs2[0]]
 
     for a in action_sequence:
-        obs, _, _, _, _ = env2.step(np.array([a]))
+        obs, _, _, _, _ = env2.step(np.array(a))
         trajectory2.append(obs[0])
 
     # Check
@@ -172,11 +179,19 @@ def show_environment_parameters():
     for key, value in params.items():
         print(f"  {key:12s} = {value:.4f}")
 
+    print(f"\nEquity Issuance Costs:")
+    print(f"  p (proportional) = {env._params.p:.4f}")
+    print(f"  φ (fixed)        = {env._params.phi:.6f}")
+
+    print(f"\nLiquidation:")
+    print(f"  ω (recovery rate) = {env._params.omega:.4f}")
+    print(f"  Liquidation value = {env._dynamics.liquidation_value():.4f}")
+
     print(f"\nEnvironment Settings:")
-    print(f"  dt           = {env.dt:.4f}")
-    print(f"  max_steps    = {env.max_steps}")
-    print(f"  a_max        = {env.a_max:.4f}")
-    print(f"  liquidation  = {env.liquidation_penalty:.4f}")
+    print(f"  dt               = {env.dt:.4f}")
+    print(f"  max_steps        = {env.max_steps}")
+    print(f"  dividend_max     = {env.dividend_max:.4f}")
+    print(f"  equity_max       = {env.equity_max:.4f}")
 
     print(f"\nDiscount Factor (for SAC/PPO):")
     gamma = env.get_expected_discount_factor()
@@ -198,8 +213,8 @@ if __name__ == "__main__":
     run_random_policy(n_episodes=3, max_steps=100)
 
     # Run with fixed policies
-    run_fixed_policy(dividend_rate=0.5, n_episodes=2, max_steps=150)
-    run_fixed_policy(dividend_rate=5.0, n_episodes=2, max_steps=150)
+    run_fixed_policy(dividend_amount=0.05, equity_amount=0.0, n_episodes=2, max_steps=150)
+    run_fixed_policy(dividend_amount=0.5, equity_amount=0.0, n_episodes=2, max_steps=150)
 
     print("\n" + "=" * 60)
     print("Example completed successfully!")
