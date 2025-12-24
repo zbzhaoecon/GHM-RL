@@ -6,27 +6,20 @@ trajectory rollouts across multiple CPU cores for improved performance.
 """
 
 import multiprocessing as mp
-from typing import Optional, Callable
+from typing import Optional
 import torch
 from torch import Tensor
 import numpy as np
+import pickle
 
 from macro_rl.simulation.trajectory import TrajectorySimulator, TrajectoryBatch
 
 
 def _rollout_worker(
-    dynamics_class,
-    dynamics_params,
-    control_spec,
-    reward_fn_class,
-    reward_fn_params,
+    simulator_state,
     policy_state_dict,
-    policy_class,
-    policy_kwargs,
     initial_states_np,
     noise_np,
-    dt,
-    T,
     seed,
 ):
     """
@@ -36,18 +29,10 @@ def _rollout_worker(
     simulation on a chunk of initial states.
 
     Args:
-        dynamics_class: Class constructor for dynamics
-        dynamics_params: Parameters to initialize dynamics
-        control_spec: Control specification
-        reward_fn_class: Class constructor for reward function
-        reward_fn_params: Parameters to initialize reward function
+        simulator_state: Pickled simulator object
         policy_state_dict: Serialized policy parameters
-        policy_class: Policy class constructor
-        policy_kwargs: Kwargs for policy initialization
         initial_states_np: Initial states as numpy array
         noise_np: Noise as numpy array
-        dt: Time step
-        T: Time horizon
         seed: Random seed for this worker
 
     Returns:
@@ -57,28 +42,55 @@ def _rollout_worker(
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    # Reconstruct dynamics, reward function, and policy
-    dynamics = dynamics_class(dynamics_params)
-    reward_fn = reward_fn_class(**reward_fn_params)
+    # Unpickle simulator
+    simulator = pickle.loads(simulator_state)
 
-    # Reconstruct policy
-    policy = policy_class(**policy_kwargs)
-    policy.load_state_dict(policy_state_dict)
-    policy.eval()
+    # Create a temporary policy-like object that just loads state dict
+    # We'll use the simulator's internal mechanisms
+    class TempPolicy:
+        def __init__(self, state_dict):
+            self._state_dict = state_dict
+
+        def state_dict(self):
+            return self._state_dict
+
+        def load_state_dict(self, state_dict):
+            self._state_dict = state_dict
+
+        def eval(self):
+            pass
 
     # Convert numpy arrays to tensors
     initial_states = torch.from_numpy(initial_states_np).float()
     noise = torch.from_numpy(noise_np).float()
 
-    # Create simulator and run rollout
-    simulator = TrajectorySimulator(
-        dynamics=dynamics,
-        control_spec=control_spec,
-        reward_fn=reward_fn,
-        dt=dt,
-        T=T,
-    )
+    # We need to reconstruct the actual policy
+    # Import here to avoid circular imports
+    from macro_rl.networks.actor_critic import ActorCritic
 
+    # Extract policy config from state dict structure
+    # This is a workaround - we'll improve it
+    state_dict_copy = dict(policy_state_dict)
+
+    # Get the metadata we stored
+    state_dim = state_dict_copy.pop('_metadata_state_dim')
+    action_dim = state_dict_copy.pop('_metadata_action_dim')
+    hidden_dims = state_dict_copy.pop('_metadata_hidden_dims')
+    shared_layers = state_dict_copy.pop('_metadata_shared_layers')
+    action_bounds = state_dict_copy.pop('_metadata_action_bounds', None)
+
+    # Reconstruct policy
+    policy = ActorCritic(
+        state_dim=state_dim,
+        action_dim=action_dim,
+        hidden_dims=hidden_dims,
+        shared_layers=shared_layers,
+        action_bounds=action_bounds,
+    )
+    policy.load_state_dict(state_dict_copy)
+    policy.eval()
+
+    # Run rollout
     with torch.no_grad():
         trajectories = simulator.rollout(policy, initial_states, noise)
 
@@ -174,35 +186,6 @@ class ParallelTrajectorySimulator:
             n_workers = max(1, mp.cpu_count() - 1)
         self.n_workers = max(1, n_workers)
 
-        # Cache dynamics and reward function parameters for serialization
-        self._cache_serialization_params()
-
-    def _cache_serialization_params(self):
-        """Cache parameters needed to reconstruct dynamics and reward function."""
-        from macro_rl.dynamics.ghm_equity import GHMEquityDynamics
-        from macro_rl.rewards.ghm_rewards import GHMRewardFunction
-
-        # Store dynamics class and params
-        self.dynamics_class = type(self.dynamics)
-        if isinstance(self.dynamics, GHMEquityDynamics):
-            self.dynamics_params = self.dynamics.params
-        else:
-            # For other dynamics, store what we can
-            self.dynamics_params = None
-
-        # Store reward function class and params
-        self.reward_fn_class = type(self.reward_fn)
-        if isinstance(self.reward_fn, GHMRewardFunction):
-            self.reward_fn_params = {
-                'discount_rate': self.reward_fn.discount_rate_value,
-                'issuance_cost': self.reward_fn.issuance_cost,
-                'liquidation_rate': self.reward_fn.liquidation_rate,
-                'liquidation_flow': self.reward_fn.liquidation_flow,
-            }
-        else:
-            # For other reward functions, store what we can
-            self.reward_fn_params = {}
-
     def rollout(
         self,
         policy,
@@ -244,40 +227,27 @@ class ParallelTrajectorySimulator:
             chunks.append(initial_states[start_idx:end_idx])
             noise_chunks.append(noise[start_idx:end_idx])
 
-        # Prepare policy state dict
+        # Prepare policy state dict with metadata
         policy_state_dict = policy.state_dict()
 
-        # Get policy class and kwargs for reconstruction
-        from macro_rl.networks.actor_critic import ActorCritic
-        if isinstance(policy, ActorCritic):
-            policy_class = ActorCritic
-            policy_kwargs = {
-                'state_dim': policy.state_dim,
-                'action_dim': policy.action_dim,
-                'shared_layers': policy.shared_layers,
-                'hidden_dims': policy.hidden_dims,
-                'action_bounds': policy.action_bounds,
-            }
-        else:
-            # Fall back to sequential if policy type not supported
-            return self.sequential_simulator.rollout(policy, initial_states, noise)
+        # Add metadata to state dict
+        policy_state_dict['_metadata_state_dim'] = policy.state_dim
+        policy_state_dict['_metadata_action_dim'] = policy.action_dim
+        policy_state_dict['_metadata_hidden_dims'] = policy.hidden_dims
+        policy_state_dict['_metadata_shared_layers'] = policy.shared_layers
+        policy_state_dict['_metadata_action_bounds'] = policy.action_bounds
+
+        # Pickle the simulator once
+        simulator_state = pickle.dumps(self.sequential_simulator)
 
         # Prepare arguments for each worker
         worker_args = []
         for i, (chunk, noise_chunk) in enumerate(zip(chunks, noise_chunks)):
             worker_args.append((
-                self.dynamics_class,
-                self.dynamics_params,
-                self.control_spec,
-                self.reward_fn_class,
-                self.reward_fn_params,
+                simulator_state,
                 policy_state_dict,
-                policy_class,
-                policy_kwargs,
                 chunk.cpu().numpy(),
                 noise_chunk.cpu().numpy(),
-                self.dt,
-                self.T,
                 np.random.randint(0, 2**31 - 1),  # Random seed for this worker
             ))
 
