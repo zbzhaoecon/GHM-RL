@@ -187,8 +187,8 @@ class MonteCarloPolicyGradient(Solver):
         self.policy_optimizer.step()
 
         # 6. Update baseline (if exists)
-        baseline_loss = 0.0
-        baseline_grad_norm = 0.0
+        baseline_loss = torch.tensor(0.0)
+        baseline_grad_norm = torch.tensor(0.0)
         if self.baseline is not None:
             baseline_loss, baseline_grad_norm = self._update_baseline(
                 initial_states,
@@ -230,8 +230,8 @@ class MonteCarloPolicyGradient(Solver):
                 'policy/entropy': self.policy.entropy(initial_states).mean().item(),
 
                 # Gradients
-                'grad_norm/policy': policy_grad_norm.item() if isinstance(policy_grad_norm, torch.Tensor) else policy_grad_norm,
-                'grad_norm/baseline': baseline_grad_norm if isinstance(baseline_grad_norm, float) else baseline_grad_norm.item(),
+                'grad_norm/policy': policy_grad_norm.item() if isinstance(policy_grad_norm, torch.Tensor) else float(policy_grad_norm),
+                'grad_norm/baseline': baseline_grad_norm.item() if isinstance(baseline_grad_norm, torch.Tensor) else float(baseline_grad_norm),
             }
 
             # Add action statistics for multi-dimensional actions
@@ -282,18 +282,22 @@ class MonteCarloPolicyGradient(Solver):
         """
         state_space = self.dynamics.state_space
 
+        # Get device from policy parameters
+        device = next(self.policy.parameters()).device
+
         # Check if state_space has sample method
         if hasattr(state_space, 'sample'):
-            return state_space.sample(n)
+            states = state_space.sample(n)
+            return states.to(device)
 
         # Otherwise use uniform sampling from bounds
-        lower = state_space.lower
-        upper = state_space.upper
+        lower = state_space.lower.to(device)
+        upper = state_space.upper.to(device)
 
         # Sample uniformly
         states = lower + (upper - lower) * torch.rand(
             n, len(lower),
-            device=lower.device,
+            device=device,
             dtype=lower.dtype
         )
 
@@ -303,7 +307,7 @@ class MonteCarloPolicyGradient(Solver):
         self,
         states: Tensor,
         returns: Tensor,
-    ) -> tuple[Tensor, float]:
+    ) -> tuple[Tensor, Tensor]:
         """
         Update baseline (value function) via regression.
 
