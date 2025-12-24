@@ -194,7 +194,7 @@ class ParallelTrajectorySimulator:
         self.reward_fn_class = type(self.reward_fn)
         if isinstance(self.reward_fn, GHMRewardFunction):
             self.reward_fn_params = {
-                'discount_rate': self.reward_fn.discount_rate,
+                'discount_rate': self.reward_fn.discount_rate_value,
                 'issuance_cost': self.reward_fn.issuance_cost,
                 'liquidation_rate': self.reward_fn.liquidation_rate,
                 'liquidation_flow': self.reward_fn.liquidation_flow,
