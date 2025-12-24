@@ -11,9 +11,18 @@ Usage:
     python scripts/train_actor_critic_ghm_model1.py --n_iterations 100000 --lr 1e-4
     python scripts/train_actor_critic_ghm_model1.py --seed 456 --device cuda
 
+    # Enable parallel trajectory simulation for faster training
+    python scripts/train_actor_critic_ghm_model1.py --use_parallel
+    python scripts/train_actor_critic_ghm_model1.py --use_parallel --n_workers 8
+
     # Resume from checkpoint (e.g., to tune hyperparameters)
     python scripts/train_actor_critic_ghm_model1.py --resume checkpoints/ghm_model1/step_5000.pt
     python scripts/train_actor_critic_ghm_model1.py --resume checkpoints/ghm_model1/best_model.pt --lr 1e-5
+
+Parallel Simulation:
+    Use --use_parallel to enable multiprocessing-based parallel trajectory simulation.
+    This splits trajectory batches across multiple CPU cores for significant speedup.
+    By default, uses (CPU count - 1) workers. Override with --n_workers.
 """
 
 import argparse
@@ -71,6 +80,12 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--ckpt_freq", type=int, default=5000, help="Checkpoint frequency (iterations)")
     parser.add_argument("--ckpt_dir", type=str, default="checkpoints/ghm_model1", help="Checkpoint directory")
 
+    # Parallel simulation
+    parser.add_argument("--use_parallel", action="store_true",
+                       help="Enable parallel trajectory simulation using multiprocessing")
+    parser.add_argument("--n_workers", type=int, default=None,
+                       help="Number of parallel workers (default: CPU count - 1)")
+
     # Misc
     parser.add_argument("--seed", type=int, default=123, help="Random seed")
     parser.add_argument("--device", type=str, default=None,
@@ -99,6 +114,8 @@ def parse_args() -> TrainConfig:
         eval_freq=args.eval_freq,
         ckpt_freq=args.ckpt_freq,
         ckpt_dir=args.ckpt_dir,
+        use_parallel=args.use_parallel,
+        n_workers=args.n_workers,
         seed=args.seed,
         device=args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"),
         resume=args.resume,
@@ -332,6 +349,8 @@ def main():
         n_trajectories=config.n_trajectories,
         lr=config.lr,
         max_grad_norm=config.max_grad_norm,
+        use_parallel=config.use_parallel,
+        n_workers=config.n_workers,
     )
 
     print(f"  Critic loss: {config.critic_loss}")
@@ -340,6 +359,11 @@ def main():
     print(f"  Entropy weight: {config.entropy_weight}")
     print(f"  Learning rate: {config.lr}")
     print(f"  Max grad norm: {config.max_grad_norm}")
+    print(f"  Parallel simulation: {config.use_parallel}")
+    if config.use_parallel:
+        import multiprocessing as mp
+        n_workers = config.n_workers if config.n_workers else max(1, mp.cpu_count() - 1)
+        print(f"  Number of workers: {n_workers}")
 
     # =========================================================================
     # Setup TensorBoard
