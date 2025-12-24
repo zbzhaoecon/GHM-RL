@@ -32,10 +32,60 @@ from torch.utils.tensorboard import SummaryWriter
 from macro_rl.dynamics import GHMEquityDynamics, GHMEquityParams
 from macro_rl.control.ghm_control import GHMControlSpec
 from macro_rl.rewards.ghm_rewards import GHMRewardFunction
-from macro_rl.policies.neural import GaussianPolicy
-from macro_rl.values.neural import ValueNetwork
+from macro_rl.networks.policy import GaussianPolicy  # FIXED: Use actor-critic policy
+from macro_rl.networks.value import ValueNetwork    # FIXED: Use actor-critic value network
 from macro_rl.simulation.trajectory import TrajectorySimulator
 from macro_rl.solvers.monte_carlo import MonteCarloPolicyGradient
+
+
+class PolicyAdapter(torch.nn.Module):
+    """
+    Adapter to make actor-critic GaussianPolicy compatible with Monte Carlo solver.
+
+    The Monte Carlo solver expects:
+    - policy.log_prob(state, action) -> log_prob
+    - policy.entropy(state) -> entropy
+
+    But actor-critic GaussianPolicy has:
+    - policy.log_prob_and_entropy(state, action) -> (log_prob, entropy)
+    - policy.get_distribution(state) -> distribution
+    """
+    def __init__(self, policy: GaussianPolicy):
+        super().__init__()
+        self.policy = policy
+
+    def forward(self, state):
+        """Forward pass for distribution."""
+        return self.policy.get_distribution(state)
+
+    def act(self, state):
+        """Sample action (used by TrajectorySimulator)."""
+        action, _ = self.policy.sample(state, deterministic=False)
+        return action
+
+    def log_prob(self, state, action):
+        """Compute log probability."""
+        log_prob, _ = self.policy.log_prob_and_entropy(state, action)
+        return log_prob
+
+    def entropy(self, state):
+        """Compute entropy."""
+        dist = self.policy.get_distribution(state)
+        return dist.entropy().sum(dim=-1)
+
+    def parameters(self):
+        """Pass through to underlying policy."""
+        return self.policy.parameters()
+
+    def train(self, mode=True):
+        """Set training mode."""
+        self.policy.train(mode)
+        return super().train(mode)
+
+    def eval(self):
+        """Set evaluation mode."""
+        self.policy.eval()
+        return super().eval()
 
 
 @dataclass
@@ -175,9 +225,12 @@ def save_checkpoint(
     if ckpt_name is None:
         ckpt_name = f"step_{step:06d}.pt"
 
+    # Unwrap policy if it's adapted
+    policy_to_save = solver.policy.policy if hasattr(solver.policy, 'policy') else solver.policy
+
     checkpoint = {
         'step': step,
-        'policy_state_dict': solver.policy.state_dict(),
+        'policy_state_dict': policy_to_save.state_dict(),
         'policy_optimizer_state_dict': solver.policy_optimizer.state_dict(),
         'config': asdict(config),
     }
@@ -203,7 +256,9 @@ def load_checkpoint(
     print(f"[Checkpoint] Loading from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=config.device)
 
-    solver.policy.load_state_dict(checkpoint['policy_state_dict'])
+    # Unwrap policy if it's adapted
+    policy_to_load = solver.policy.policy if hasattr(solver.policy, 'policy') else solver.policy
+    policy_to_load.load_state_dict(checkpoint['policy_state_dict'])
     solver.policy_optimizer.load_state_dict(checkpoint['policy_optimizer_state_dict'])
 
     if solver.baseline is not None and 'baseline_state_dict' in checkpoint:
@@ -246,9 +301,11 @@ def compute_policy_value_for_visualization(
     states = states.to(device)
 
     with torch.no_grad():
-        # Get policy distribution
-        dist = policy(states)
-        actions_mean = dist.mean.cpu()
+        # Get policy distribution parameters
+        dist = policy.get_distribution(states)
+        # Get mean actions (with bounds applied via sigmoid)
+        actions_mean, _ = policy.sample(states, deterministic=True)
+        actions_mean = actions_mean.cpu()
         actions_std = dist.stddev.cpu()
 
         # Get value estimates
@@ -368,7 +425,7 @@ def create_training_visualization(
 
 def log_policy_value_visualization(
     writer: SummaryWriter,
-    policy: GaussianPolicy,
+    policy: PolicyAdapter,
     baseline: ValueNetwork,
     dynamics: GHMEquityDynamics,
     step: int,
@@ -377,8 +434,8 @@ def log_policy_value_visualization(
     """Generate and log policy/value visualizations to TensorBoard."""
     print(f"  Generating policy/value visualizations...")
 
-    # Compute policy and value on grid
-    results = compute_policy_value_for_visualization(policy, baseline, dynamics, n_points=100)
+    # Compute policy and value on grid (unwrap the policy)
+    results = compute_policy_value_for_visualization(policy.policy, baseline, dynamics, n_points=100)
 
     # Create visualization figure
     fig = create_training_visualization(results, step)
@@ -462,15 +519,19 @@ def evaluate_policy(
     initial_states = solver._sample_initial_states(n_episodes)
 
     # Rollout with deterministic actions
+    # Create a wrapper that samples deterministically
+    class DeterministicPolicy:
+        def __init__(self, policy):
+            # Unwrap the adapted policy to get the underlying policy
+            self.policy = policy.policy if hasattr(policy, 'policy') else policy
+
+        def act(self, state):
+            action, _ = self.policy.sample(state, deterministic=True)
+            return action
+
     with torch.no_grad():
-        # Temporarily make policy deterministic
-        original_forward = solver.policy.forward
-        solver.policy.forward = lambda s: solver.policy(s).mean if hasattr(solver.policy(s), 'mean') else solver.policy(s)
-
-        trajectories = solver.simulator.rollout(solver.policy, initial_states)
-
-        # Restore original forward
-        solver.policy.forward = original_forward
+        det_policy = DeterministicPolicy(solver.policy)
+        trajectories = solver.simulator.rollout(det_policy, initial_states)
 
     solver.policy.train()
 
@@ -541,16 +602,18 @@ def main():
     state_dim = dynamics.state_space.dim
     action_dim = 2  # dividend, equity issuance
 
+    # FIXED: Use actor-critic policy with sigmoid squashing for proper action bounds
     policy = GaussianPolicy(
-        state_dim=state_dim,
-        action_dim=action_dim,
+        input_dim=state_dim,
+        output_dim=action_dim,
         hidden_dims=list(config.policy_hidden),
+        action_bounds=(control_spec.lower, control_spec.upper),
     ).to(device)
 
     baseline = None
     if config.use_baseline:
         baseline = ValueNetwork(
-            state_dim=state_dim,
+            input_dim=state_dim,
             hidden_dims=list(config.value_hidden),
         ).to(device)
 
@@ -580,8 +643,12 @@ def main():
     # 6. Setup solver
     # =========================================================================
     print("\n[6/6] Setting up MonteCarloPolicyGradient solver...")
+
+    # Wrap policy with adapter to make it compatible with Monte Carlo solver
+    policy_adapted = PolicyAdapter(policy)
+
     solver = MonteCarloPolicyGradient(
-        policy=policy,
+        policy=policy_adapted,
         simulator=simulator,
         baseline=baseline,
         n_trajectories=config.n_trajectories,
@@ -670,7 +737,7 @@ def main():
             print(f"  Eval Episode Length: {eval_metrics['episode_length']:.2f}")
 
             # Generate and log policy/value visualizations
-            log_policy_value_visualization(writer, policy, baseline, dynamics, step, config)
+            log_policy_value_visualization(writer, solver.policy, baseline, dynamics, step, config)
 
             # Save best model
             if eval_metrics['return_mean'] > best_return:
