@@ -747,7 +747,7 @@ def main():
             with torch.no_grad():
                 test_states = torch.linspace(0.1, 2.0, 10).unsqueeze(1).to(device)
                 test_actions, _ = policy.sample(test_states, deterministic=True)
-                print(f"  Test policy outputs (c=0.5-2.0):")
+                print(f"  Test policy outputs (c=0.1-2.0):")
                 print(f"    Dividend (a_L): {test_actions[:, 0].cpu().numpy()}")
                 print(f"    Equity (a_E):   {test_actions[:, 1].cpu().numpy()}")
 
