@@ -628,9 +628,16 @@ def log_policy_value_visualization(
     plt.close(fig)
 
     # Log some key statistics as scalars
-    writer.add_scalar('policy_value/mean_value', results['values'].mean(), step)
-    writer.add_scalar('policy_value/mean_dividend', results['actions_mean'][:, 0].mean(), step)
-    writer.add_scalar('policy_value/mean_equity_issuance', results['actions_mean'][:, 1].mean(), step)
+    if results.get('is_time_augmented', False):
+        # For time-augmented: use grid values
+        writer.add_scalar('policy_value/mean_value', results['value_grid'].mean(), step)
+        writer.add_scalar('policy_value/mean_dividend', results['dividend_grid'].mean(), step)
+        writer.add_scalar('policy_value/mean_equity_issuance', results['equity_grid'].mean(), step)
+    else:
+        # For standard: use 1D arrays
+        writer.add_scalar('policy_value/mean_value', results['values'].mean(), step)
+        writer.add_scalar('policy_value/mean_dividend', results['actions_mean'][:, 0].mean(), step)
+        writer.add_scalar('policy_value/mean_equity_issuance', results['actions_mean'][:, 1].mean(), step)
 
     print(f"  Saved visualization to {viz_path}")
 
