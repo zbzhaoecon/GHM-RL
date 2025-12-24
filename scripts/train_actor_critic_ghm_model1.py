@@ -6,9 +6,14 @@ with TensorBoard logging for monitoring learning progress, policy behavior,
 and value function diagnostics.
 
 Usage:
+    # Start new training
     python scripts/train_actor_critic_ghm_model1.py
     python scripts/train_actor_critic_ghm_model1.py --n_iterations 100000 --lr 1e-4
     python scripts/train_actor_critic_ghm_model1.py --seed 456 --device cuda
+
+    # Resume from checkpoint (e.g., to tune hyperparameters)
+    python scripts/train_actor_critic_ghm_model1.py --resume checkpoints/ghm_model1/step_5000.pt
+    python scripts/train_actor_critic_ghm_model1.py --resume checkpoints/ghm_model1/best_model.pt --lr 1e-5
 """
 
 import argparse
@@ -26,7 +31,7 @@ from macro_rl.rewards.ghm_rewards import GHMRewardFunction
 from macro_rl.networks.actor_critic import ActorCritic
 from macro_rl.solvers.actor_critic import ModelBasedActorCritic
 
-from utils_training import TrainConfig, create_writer, save_checkpoint
+from utils_training import TrainConfig, create_writer, save_checkpoint, load_checkpoint
 
 
 def parse_args() -> TrainConfig:
@@ -70,6 +75,8 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--seed", type=int, default=123, help="Random seed")
     parser.add_argument("--device", type=str, default=None,
                        help="Device (cuda/cpu, default: auto-detect)")
+    parser.add_argument("--resume", type=str, default=None,
+                       help="Path to checkpoint to resume training from")
 
     args = parser.parse_args()
 
@@ -94,6 +101,7 @@ def parse_args() -> TrainConfig:
         ckpt_dir=args.ckpt_dir,
         seed=args.seed,
         device=args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"),
+        resume=args.resume,
     )
 
     return config
@@ -342,15 +350,35 @@ def main():
     print(f"  Monitor with: tensorboard --logdir {config.log_dir}")
 
     # =========================================================================
+    # Resume from checkpoint if provided
+    # =========================================================================
+    start_step = 1
+    best_return = -float('inf')
+
+    if config.resume:
+        start_step = load_checkpoint(config.resume, solver, config) + 1
+        print(f"\n[Checkpoint] Resuming from step {start_step}")
+
+        # Try to load best_return from checkpoint metadata if available
+        try:
+            checkpoint = torch.load(config.resume, map_location=config.device)
+            if 'best_return' in checkpoint:
+                best_return = checkpoint['best_return']
+                print(f"[Checkpoint] Restored best_return: {best_return:.4f}")
+        except:
+            print("[Checkpoint] Could not restore best_return, starting fresh")
+
+    # =========================================================================
     # Training loop
     # =========================================================================
     print("\n" + "=" * 80)
-    print(f"Starting training for {config.n_iterations} iterations...")
+    if start_step == 1:
+        print(f"Starting training for {config.n_iterations} iterations...")
+    else:
+        print(f"Resuming training from step {start_step} to {config.n_iterations}...")
     print("=" * 80)
 
-    best_return = -float('inf')
-
-    for step in range(1, config.n_iterations + 1):
+    for step in range(start_step, config.n_iterations + 1):
         # Training step
         metrics = solver.train_step(n_samples=config.n_trajectories)
 
@@ -384,13 +412,13 @@ def main():
             # Save best model
             if eval_metrics['return_mean'] > best_return:
                 best_return = eval_metrics['return_mean']
-                save_checkpoint(solver, config, step, ckpt_name="best_model.pt")
+                save_checkpoint(solver, config, step, ckpt_name="best_model.pt", best_return=best_return)
                 print(f"  New best model! Return: {best_return:.4f}")
             print()
 
         # Save periodic checkpoint
         if step % config.ckpt_freq == 0:
-            save_checkpoint(solver, config, step)
+            save_checkpoint(solver, config, step, best_return=best_return)
 
     # =========================================================================
     # Save final model
@@ -398,7 +426,7 @@ def main():
     print("\n" + "=" * 80)
     print("Training complete!")
     print("=" * 80)
-    save_checkpoint(solver, config, config.n_iterations, ckpt_name="final_model.pt")
+    save_checkpoint(solver, config, config.n_iterations, ckpt_name="final_model.pt", best_return=best_return)
 
     # Final evaluation
     print("\nFinal evaluation...")

@@ -45,6 +45,7 @@ class TrainConfig:
     # Misc
     seed: int = 123
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    resume: Optional[str] = None
 
 
 def create_writer(config: TrainConfig) -> SummaryWriter:
@@ -72,6 +73,7 @@ def save_checkpoint(
     config: TrainConfig,
     step: int,
     ckpt_name: Optional[str] = None,
+    best_return: Optional[float] = None,
 ):
     """
     Save a training checkpoint.
@@ -81,18 +83,57 @@ def save_checkpoint(
         config: Training configuration
         step: Current training step
         ckpt_name: Optional custom checkpoint name (defaults to step_{step}.pt)
+        best_return: Optional best return achieved so far (for tracking)
     """
     os.makedirs(config.ckpt_dir, exist_ok=True)
     if ckpt_name is None:
         ckpt_name = f"step_{step}.pt"
     path = os.path.join(config.ckpt_dir, ckpt_name)
-    torch.save(
-        {
-            "step": step,
-            "config": asdict(config),
-            "actor_critic_state": solver.ac.state_dict(),
-            "optimizer_state": solver.optimizer.state_dict(),
-        },
-        path,
-    )
+
+    checkpoint_data = {
+        "step": step,
+        "config": asdict(config),
+        "actor_critic_state": solver.ac.state_dict(),
+        "optimizer_state": solver.optimizer.state_dict(),
+    }
+
+    if best_return is not None:
+        checkpoint_data["best_return"] = best_return
+
+    torch.save(checkpoint_data, path)
     print(f"[Checkpoint] Saved to {path}")
+
+
+def load_checkpoint(checkpoint_path: str, solver, config: TrainConfig):
+    """
+    Load a training checkpoint and resume training.
+
+    Args:
+        checkpoint_path: Path to checkpoint file
+        solver: ModelBasedActorCritic solver instance
+        config: Current training configuration (can override saved config)
+
+    Returns:
+        start_step: The step number to resume from
+    """
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    print(f"[Checkpoint] Loading from {checkpoint_path}...")
+    checkpoint = torch.load(checkpoint_path, map_location=config.device)
+
+    # Load model and optimizer states
+    solver.ac.load_state_dict(checkpoint["actor_critic_state"])
+    solver.optimizer.load_state_dict(checkpoint["optimizer_state"])
+
+    start_step = checkpoint["step"]
+    saved_config = checkpoint.get("config", {})
+
+    print(f"[Checkpoint] Loaded successfully!")
+    print(f"  Resuming from step: {start_step}")
+    print(f"  Original config: lr={saved_config.get('lr', 'N/A')}, "
+          f"hidden_dims={saved_config.get('hidden_dims', 'N/A')}")
+    print(f"  Current config: lr={config.lr}, hidden_dims={config.hidden_dims}")
+
+    return start_step
+
