@@ -282,7 +282,7 @@ def load_checkpoint(
 def compute_policy_value_for_visualization(
     policy: GaussianPolicy,
     baseline: ValueNetwork,
-    dynamics: GHMEquityDynamics,
+    dynamics,  # GHMEquityDynamics or GHMEquityTimeAugmentedDynamics
     n_points: int = 100
 ) -> Dict[str, np.ndarray]:
     """
@@ -303,7 +303,16 @@ def compute_policy_value_for_visualization(
 
     state_space = dynamics.state_space
     c_values = np.linspace(state_space.lower[0].item(), state_space.upper[0].item(), n_points)
-    states = torch.tensor(c_values, dtype=torch.float32).unsqueeze(1)
+    c_tensor = torch.tensor(c_values, dtype=torch.float32).unsqueeze(1)
+
+    # For time-augmented dynamics, add τ dimension
+    if state_space.dim == 2:
+        # Set τ to mid-episode for visualization
+        tau_value = state_space.upper[1].item() / 2.0  # T/2
+        tau_tensor = torch.full((n_points, 1), tau_value, dtype=torch.float32)
+        states = torch.cat([c_tensor, tau_tensor], dim=1)
+    else:
+        states = c_tensor
 
     device = next(policy.parameters()).device
     states = states.to(device)
@@ -326,11 +335,16 @@ def compute_policy_value_for_visualization(
     if baseline is not None:
         states_grad = states.clone().requires_grad_(True)
         values_grad = baseline(states_grad)
-        V_s = torch.autograd.grad(
+        grads = torch.autograd.grad(
             values_grad.sum(),
             states_grad,
             create_graph=False
-        )[0].detach().cpu().squeeze()
+        )[0].detach().cpu()
+        # For time-augmented, extract only ∂V/∂c (first component)
+        if state_space.dim == 2:
+            V_s = grads[:, 0]
+        else:
+            V_s = grads.squeeze()
     else:
         V_s = torch.zeros(n_points)
 
@@ -435,7 +449,7 @@ def log_policy_value_visualization(
     writer: SummaryWriter,
     policy: PolicyAdapter,
     baseline: ValueNetwork,
-    dynamics: GHMEquityDynamics,
+    dynamics,  # GHMEquityDynamics or GHMEquityTimeAugmentedDynamics
     step: int,
     config: TrainConfig,
 ):
@@ -748,9 +762,12 @@ def main():
 
             # DIAGNOSTIC: Sample test policy to see what it's doing
             with torch.no_grad():
-                test_states = torch.linspace(0.1, 2.0, 10).unsqueeze(1).to(device)
+                # Create test states with (c, τ) for time-augmented dynamics
+                c_test = torch.linspace(0.1, 2.0, 10).unsqueeze(1)
+                tau_test = torch.full((10, 1), config.T / 2)  # Mid-episode behavior
+                test_states = torch.cat([c_test, tau_test], dim=1).to(device)
                 test_actions, _ = policy.sample(test_states, deterministic=True)
-                print(f"  Test policy outputs (c=0.1-2.0):")
+                print(f"  Test policy outputs (c=0.1-2.0, τ={config.T/2:.1f}):")
                 print(f"    Dividend (a_L): {test_actions[:, 0].cpu().numpy()}")
                 print(f"    Equity (a_E):   {test_actions[:, 1].cpu().numpy()}")
 
