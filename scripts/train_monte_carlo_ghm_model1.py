@@ -152,7 +152,7 @@ def parse_args() -> TrainConfig:
     # Logging and checkpoints
     parser.add_argument("--log_dir", type=str, default="runs/monte_carlo_model1", help="TensorBoard log directory")
     parser.add_argument("--log_freq", type=int, default=100, help="Logging frequency (iterations)")
-    parser.add_argument("--eval_freq", type=int, default=1000, help="Evaluation frequency (iterations)")
+    parser.add_argument("--eval_freq", type=int, default=500, help="Evaluation frequency (iterations)")
     parser.add_argument("--ckpt_freq", type=int, default=5000, help="Checkpoint frequency (iterations)")
     parser.add_argument("--ckpt_dir", type=str, default="checkpoints/monte_carlo_model1", help="Checkpoint directory")
 
