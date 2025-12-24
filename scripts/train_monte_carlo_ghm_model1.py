@@ -102,6 +102,7 @@ class TrainConfig:
     lr_baseline: float = 1e-3
     max_grad_norm: float = 0.5
     advantage_normalization: bool = True
+    entropy_weight: float = 0.01
 
     # Network architecture
     policy_hidden: tuple = (64, 64)
@@ -137,6 +138,7 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--lr_policy", type=float, default=3e-4, help="Policy learning rate")
     parser.add_argument("--lr_baseline", type=float, default=1e-3, help="Baseline learning rate")
     parser.add_argument("--max_grad_norm", type=float, default=0.5, help="Max gradient norm for clipping")
+    parser.add_argument("--entropy_weight", type=float, default=0.01, help="Entropy regularization weight")
     parser.add_argument("--no_baseline", action="store_true", help="Disable baseline (pure REINFORCE)")
 
     # Network architecture
@@ -170,6 +172,7 @@ def parse_args() -> TrainConfig:
         lr_policy=args.lr_policy,
         lr_baseline=args.lr_baseline,
         max_grad_norm=args.max_grad_norm,
+        entropy_weight=args.entropy_weight,
         policy_hidden=tuple(args.policy_hidden),
         value_hidden=tuple(args.value_hidden),
         use_baseline=not args.no_baseline,
@@ -656,6 +659,7 @@ def main():
         lr_baseline=config.lr_baseline,
         advantage_normalization=config.advantage_normalization,
         max_grad_norm=config.max_grad_norm,
+        entropy_weight=config.entropy_weight,
     )
 
     print(f"  Number of trajectories: {config.n_trajectories}")
@@ -663,6 +667,7 @@ def main():
     print(f"  Baseline learning rate: {config.lr_baseline}")
     print(f"  Max grad norm: {config.max_grad_norm}")
     print(f"  Advantage normalization: {config.advantage_normalization}")
+    print(f"  Entropy weight: {config.entropy_weight}")
 
     # =========================================================================
     # Setup TensorBoard and save configuration

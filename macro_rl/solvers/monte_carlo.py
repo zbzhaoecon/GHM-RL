@@ -58,6 +58,7 @@ class MonteCarloPolicyGradient(Solver):
         batch_size: int = 1000,
         advantage_normalization: bool = True,
         max_grad_norm: float = 0.5,
+        entropy_weight: float = 0.01,
     ):
         """
         Initialize Monte Carlo solver.
@@ -72,6 +73,7 @@ class MonteCarloPolicyGradient(Solver):
             batch_size: Batch size for initial state sampling
             advantage_normalization: Whether to normalize advantages
             max_grad_norm: Gradient clipping threshold
+            entropy_weight: Entropy regularization weight (encourage exploration)
         """
         self.policy = policy
         self.simulator = simulator
@@ -80,6 +82,7 @@ class MonteCarloPolicyGradient(Solver):
         self.batch_size = batch_size
         self.advantage_normalization = advantage_normalization
         self.max_grad_norm = max_grad_norm
+        self.entropy_weight = entropy_weight
 
         # Optimizers
         self.policy_optimizer = Adam(policy.parameters(), lr=lr_policy)
@@ -174,9 +177,13 @@ class MonteCarloPolicyGradient(Solver):
         # 4. Compute policy loss (REINFORCE)
         policy_loss = self._compute_policy_loss(trajectories, advantages)
 
+        # 4b. Add entropy bonus (encourage exploration)
+        entropy = self.policy.entropy(initial_states).mean()
+        total_loss = policy_loss - self.entropy_weight * entropy
+
         # 5. Update policy
         self.policy_optimizer.zero_grad()
-        policy_loss.backward()
+        total_loss.backward()
 
         # Clip gradients
         policy_grad_norm = nn.utils.clip_grad_norm_(
@@ -211,6 +218,7 @@ class MonteCarloPolicyGradient(Solver):
 
                 # Losses
                 'loss/policy': policy_loss.item(),
+                'loss/total': total_loss.item(),
                 'loss/baseline': baseline_loss if isinstance(baseline_loss, float) else baseline_loss.item(),
 
                 # Advantages
