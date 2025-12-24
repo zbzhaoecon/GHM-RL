@@ -10,76 +10,53 @@ from typing import Optional
 import torch
 from torch import Tensor
 import numpy as np
-import pickle
-
-from macro_rl.simulation.trajectory import TrajectorySimulator, TrajectoryBatch
 
 
-def _rollout_worker(
-    simulator_state,
-    policy_state_dict,
-    initial_states_np,
-    noise_np,
-    seed,
-):
+# Global worker state (initialized once per process)
+_worker_simulator = None
+_worker_policy = None
+
+
+def _init_worker(simulator_state, policy_class_info):
+    """Initialize worker process with simulator and policy template."""
+    global _worker_simulator, _worker_policy
+    import pickle
+
+    # Unpickle simulator once
+    _worker_simulator = pickle.loads(simulator_state)
+
+    # Store policy class info for reconstruction
+    _worker_policy = policy_class_info
+
+
+def _rollout_chunk(policy_state_dict, initial_states_np, noise_np, seed):
     """
-    Worker function for parallel trajectory rollout.
+    Worker function to rollout a chunk of trajectories.
 
-    This function is executed in a separate process and performs trajectory
-    simulation on a chunk of initial states.
-
-    Args:
-        simulator_state: Pickled simulator object
-        policy_state_dict: Serialized policy parameters
-        initial_states_np: Initial states as numpy array
-        noise_np: Noise as numpy array
-        seed: Random seed for this worker
-
-    Returns:
-        Dictionary of trajectory components as numpy arrays
+    Uses the global simulator and reconstructs policy from state dict.
     """
-    # Set random seed for this worker
+    global _worker_simulator, _worker_policy
+
+    # Set random seed
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    # Unpickle simulator
-    simulator = pickle.loads(simulator_state)
-
-    # Create a temporary policy-like object that just loads state dict
-    # We'll use the simulator's internal mechanisms
-    class TempPolicy:
-        def __init__(self, state_dict):
-            self._state_dict = state_dict
-
-        def state_dict(self):
-            return self._state_dict
-
-        def load_state_dict(self, state_dict):
-            self._state_dict = state_dict
-
-        def eval(self):
-            pass
-
-    # Convert numpy arrays to tensors
+    # Convert numpy to tensors
     initial_states = torch.from_numpy(initial_states_np).float()
     noise = torch.from_numpy(noise_np).float()
 
-    # We need to reconstruct the actual policy
-    # Import here to avoid circular imports
+    # Reconstruct policy from state dict
     from macro_rl.networks.actor_critic import ActorCritic
 
-    # Extract policy config from state dict structure
-    # This is a workaround - we'll improve it
+    # Extract metadata
     state_dict_copy = dict(policy_state_dict)
-
-    # Get the metadata we stored
     state_dim = state_dict_copy.pop('_metadata_state_dim')
     action_dim = state_dict_copy.pop('_metadata_action_dim')
     hidden_dims = state_dict_copy.pop('_metadata_hidden_dims')
     shared_layers = state_dict_copy.pop('_metadata_shared_layers')
     action_bounds = state_dict_copy.pop('_metadata_action_bounds', None)
 
-    # Reconstruct policy
+    # Create policy
     policy = ActorCritic(
         state_dim=state_dim,
         action_dim=action_dim,
@@ -92,9 +69,9 @@ def _rollout_worker(
 
     # Run rollout
     with torch.no_grad():
-        trajectories = simulator.rollout(policy, initial_states, noise)
+        trajectories = _worker_simulator.rollout(policy, initial_states, noise)
 
-    # Convert back to numpy for serialization
+    # Convert to numpy
     return {
         'states': trajectories.states.cpu().numpy(),
         'actions': trajectories.actions.cpu().numpy(),
@@ -109,38 +86,7 @@ class ParallelTrajectorySimulator:
     """
     Parallel trajectory simulator using multiprocessing.
 
-    This class wraps TrajectorySimulator and distributes trajectory rollouts
-    across multiple CPU cores for improved performance. It's especially useful
-    when simulating large batches of trajectories.
-
-    Example:
-        >>> from macro_rl.dynamics.ghm_equity import GHMEquityDynamics, GHMEquityParams
-        >>> from macro_rl.control.ghm_control import GHMControlSpec
-        >>> from macro_rl.rewards.ghm_rewards import GHMRewardFunction
-        >>> from macro_rl.networks.actor_critic import ActorCritic
-        >>>
-        >>> params = GHMEquityParams()
-        >>> dynamics = GHMEquityDynamics(params)
-        >>> control_spec = GHMControlSpec()
-        >>> reward_fn = GHMRewardFunction(
-        ...     discount_rate=params.r - params.mu,
-        ...     issuance_cost=params.lambda_,
-        ...     liquidation_rate=params.omega,
-        ...     liquidation_flow=params.alpha,
-        ... )
-        >>> policy = ActorCritic(state_dim=1, action_dim=2)
-        >>>
-        >>> simulator = ParallelTrajectorySimulator(
-        ...     dynamics=dynamics,
-        ...     control_spec=control_spec,
-        ...     reward_fn=reward_fn,
-        ...     dt=0.01,
-        ...     T=10.0,
-        ...     n_workers=4,
-        ... )
-        >>>
-        >>> initial_states = torch.rand(1000, 1) * 10.0
-        >>> trajectories = simulator.rollout(policy, initial_states)
+    Uses a persistent process pool to avoid repeated initialization overhead.
     """
 
     def __init__(
@@ -153,25 +99,14 @@ class ParallelTrajectorySimulator:
         n_workers: Optional[int] = None,
         integrator: Optional[object] = None,
     ):
-        """
-        Initialize parallel trajectory simulator.
+        """Initialize parallel trajectory simulator."""
+        from macro_rl.simulation.trajectory import TrajectorySimulator
+        import pickle
 
-        Args:
-            dynamics: Continuous-time dynamics
-            control_spec: Control specification
-            reward_fn: Reward function
-            dt: Time step size
-            T: Time horizon
-            n_workers: Number of parallel workers (default: CPU count - 1)
-            integrator: SDE integrator (defaults to Euler-Maruyama)
-        """
-        self.dynamics = dynamics
-        self.control_spec = control_spec
-        self.reward_fn = reward_fn
         self.dt = float(dt)
         self.T = float(T)
 
-        # Create a single sequential simulator for fallback
+        # Create sequential simulator
         self.sequential_simulator = TrajectorySimulator(
             dynamics=dynamics,
             control_spec=control_spec,
@@ -186,35 +121,50 @@ class ParallelTrajectorySimulator:
             n_workers = max(1, mp.cpu_count() - 1)
         self.n_workers = max(1, n_workers)
 
+        # Initialize process pool if using multiple workers
+        self._pool = None
+        if self.n_workers > 1:
+            # Pickle simulator state once
+            simulator_state = pickle.dumps(self.sequential_simulator)
+
+            # Set spawn method for compatibility (especially on macOS)
+            ctx = mp.get_context('spawn')
+
+            # Create pool with initializer
+            self._pool = ctx.Pool(
+                processes=self.n_workers,
+                initializer=_init_worker,
+                initargs=(simulator_state, None),
+            )
+
+    def __del__(self):
+        """Clean up process pool on deletion."""
+        if self._pool is not None:
+            self._pool.close()
+            self._pool.join()
+
     def rollout(
         self,
         policy,
         initial_states: Tensor,
         noise: Optional[Tensor] = None,
-    ) -> TrajectoryBatch:
-        """
-        Simulate batch of trajectories in parallel.
+    ):
+        """Simulate batch of trajectories in parallel."""
+        from macro_rl.simulation.trajectory import TrajectoryBatch
 
-        Args:
-            policy: Policy to sample actions from
-            initial_states: Initial states (batch, state_dim)
-            noise: Optional pre-sampled noise (batch, n_steps, state_dim)
-
-        Returns:
-            TrajectoryBatch containing complete trajectories
-        """
-        # If only 1 worker or small batch, use sequential simulator
         batch_size = initial_states.shape[0]
-        if self.n_workers == 1 or batch_size < self.n_workers * 2:
+
+        # Use sequential for small batches or single worker
+        if self.n_workers == 1 or batch_size < self.n_workers * 4:
             return self.sequential_simulator.rollout(policy, initial_states, noise)
 
-        # Generate noise if not provided
+        # Generate noise if needed
         if noise is None:
             state_dim = initial_states.shape[-1]
             max_steps = self.sequential_simulator.max_steps
             noise = torch.randn(batch_size, max_steps, state_dim, device=initial_states.device)
 
-        # Split batch into chunks for each worker
+        # Split into chunks
         chunk_size = (batch_size + self.n_workers - 1) // self.n_workers
         chunks = []
         noise_chunks = []
@@ -229,31 +179,25 @@ class ParallelTrajectorySimulator:
 
         # Prepare policy state dict with metadata
         policy_state_dict = policy.state_dict()
-
-        # Add metadata to state dict
         policy_state_dict['_metadata_state_dim'] = policy.state_dim
         policy_state_dict['_metadata_action_dim'] = policy.action_dim
         policy_state_dict['_metadata_hidden_dims'] = policy.hidden_dims
         policy_state_dict['_metadata_shared_layers'] = policy.shared_layers
         policy_state_dict['_metadata_action_bounds'] = policy.action_bounds
 
-        # Pickle the simulator once
-        simulator_state = pickle.dumps(self.sequential_simulator)
-
-        # Prepare arguments for each worker
-        worker_args = []
-        for i, (chunk, noise_chunk) in enumerate(zip(chunks, noise_chunks)):
-            worker_args.append((
-                simulator_state,
+        # Prepare worker arguments
+        worker_args = [
+            (
                 policy_state_dict,
                 chunk.cpu().numpy(),
                 noise_chunk.cpu().numpy(),
-                np.random.randint(0, 2**31 - 1),  # Random seed for this worker
-            ))
+                np.random.randint(0, 2**31 - 1),
+            )
+            for chunk, noise_chunk in zip(chunks, noise_chunks)
+        ]
 
-        # Run rollouts in parallel
-        with mp.Pool(processes=len(chunks)) as pool:
-            results = pool.starmap(_rollout_worker, worker_args)
+        # Execute in parallel
+        results = self._pool.starmap(_rollout_chunk, worker_args)
 
         # Concatenate results
         device = initial_states.device
