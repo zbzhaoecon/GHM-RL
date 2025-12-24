@@ -46,6 +46,13 @@ class ActorCritic(nn.Module):
         if shared_layers > len(hidden_dims):
             raise ValueError("shared_layers cannot exceed len(hidden_dims)")
 
+        # Store initialization parameters for serialization
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.hidden_dims = hidden_dims
+        self.shared_layers = shared_layers
+        self.action_bounds = action_bounds
+
         self.shared: Optional[MLP] = None
         feature_dim = state_dim
 
