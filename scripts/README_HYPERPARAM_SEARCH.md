@@ -4,19 +4,30 @@ This document explains how to use the hyperparameter search script to find optim
 
 ## Overview
 
-The `hyperparameter_search.py` script automates the process of training multiple models with different hyperparameter configurations to identify the best performing combination. It supports two search strategies:
+The `hyperparameter_search.py` script automates the process of training multiple models with different hyperparameter configurations to identify the best performing combination. It supports:
 
 - **Random Search**: Randomly samples hyperparameter combinations from a predefined search space
 - **Grid Search**: Exhaustively evaluates all combinations in a discrete grid
+- **Parallel Execution**: Run multiple trials simultaneously using ProcessPoolExecutor for maximum efficiency
 
 ## Quick Start
 
-### Random Search (Recommended)
+### Random Search with Parallel Execution (Recommended)
 
-Run 20 trials with random hyperparameter combinations:
+Run 20 trials with random hyperparameter combinations using 4 parallel workers:
 
 ```bash
-python scripts/hyperparameter_search.py --search_type random --n_trials 20 --n_iterations 5000
+python scripts/hyperparameter_search.py --search_type random --n_trials 20 --n_iterations 5000 --n_workers 4
+```
+
+**💡 Tip**: Set `--n_workers` to match the number of CPU cores or GPUs available for optimal performance.
+
+### Sequential Execution
+
+Run trials one at a time (useful for debugging or limited resources):
+
+```bash
+python scripts/hyperparameter_search.py --search_type random --n_trials 20 --n_iterations 5000 --n_workers 1
 ```
 
 ### Grid Search
@@ -24,7 +35,7 @@ python scripts/hyperparameter_search.py --search_type random --n_trials 20 --n_i
 Run exhaustive search over all hyperparameter combinations:
 
 ```bash
-python scripts/hyperparameter_search.py --search_type grid --n_iterations 5000
+python scripts/hyperparameter_search.py --search_type grid --n_iterations 5000 --n_workers 4
 ```
 
 **⚠️ Warning**: Grid search can result in a very large number of trials. With the default search space, this could be hundreds or thousands of configurations.
@@ -36,7 +47,10 @@ python scripts/hyperparameter_search.py --search_type grid --n_iterations 5000
 - `--search_type`: Type of search (`random` or `grid`). Default: `random`
 - `--n_trials`: Number of trials for random search. Default: `20`
 - `--n_iterations`: Training iterations per trial. Default: `5000`
-- `--n_workers`: Number of parallel workers (not yet implemented). Default: `1`
+- `--n_workers`: Number of parallel workers for concurrent trial execution. Default: `1`
+  - Set to `1` for sequential execution
+  - Set to number of CPU cores for maximum parallelism (e.g., `4`, `8`, `16`)
+  - Each worker runs one trial at a time, so 4 workers = 4 trials running simultaneously
 
 ### Training Parameters
 
@@ -112,7 +126,38 @@ The `search_results_TIMESTAMP.json` file contains:
 
 ## Examples
 
-### Example 1: Quick Random Search
+### Example 1: Parallel Random Search (Fastest)
+
+Run 20 trials in parallel with 8 workers (ideal for multi-core CPUs):
+
+```bash
+python scripts/hyperparameter_search.py \
+    --search_type random \
+    --n_trials 20 \
+    --n_iterations 5000 \
+    --n_workers 8 \
+    --device cpu
+```
+
+**⚡ Performance**: With 8 workers, this completes ~8x faster than sequential execution!
+
+### Example 2: GPU-Accelerated Parallel Search
+
+If you have multiple GPUs or want to use GPU for each trial:
+
+```bash
+# For single GPU (workers share the GPU)
+python scripts/hyperparameter_search.py \
+    --search_type random \
+    --n_trials 10 \
+    --n_iterations 3000 \
+    --n_workers 2 \
+    --device cuda
+```
+
+**Note**: When using `--device cuda` with multiple workers, all workers will use the same GPU. Ensure you have enough GPU memory to handle multiple trials simultaneously, or reduce `n_workers`.
+
+### Example 3: Quick Random Search
 
 Run a quick search with 10 trials and shorter training:
 
@@ -121,10 +166,10 @@ python scripts/hyperparameter_search.py \
     --search_type random \
     --n_trials 10 \
     --n_iterations 3000 \
-    --device cuda
+    --n_workers 4
 ```
 
-### Example 2: Focused Search on Learning Rates
+### Example 4: Focused Search on Learning Rates
 
 To focus only on learning rates, modify the `SearchSpace` class to set other hyperparameters to single values:
 
@@ -205,28 +250,52 @@ tensorboard --logdir results/hyperparam_search/
 
 ## Tips for Effective Search
 
-1. **Start with Random Search**: Random search is often more efficient than grid search, especially with many hyperparameters.
+1. **Use Parallel Execution**: Set `--n_workers` to the number of CPU cores available (e.g., 4, 8, 16) to run multiple trials simultaneously. This can reduce total search time by 4-16x compared to sequential execution.
 
-2. **Use Shorter Training Initially**: Run a first pass with `--n_iterations 3000` to quickly identify promising regions, then do a refined search with longer training.
+2. **Start with Random Search**: Random search is often more efficient than grid search, especially with many hyperparameters. It explores the space more effectively with fewer trials.
 
-3. **Monitor Progress**: Check the `search_results_*.json` file periodically to see if the search is finding good configurations.
+3. **Two-Stage Search**:
+   - **Stage 1**: Run a broad search with `--n_iterations 3000` and `--n_workers 8` to quickly identify promising regions
+   - **Stage 2**: Refine with longer training (`--n_iterations 10000`) on the best configurations
 
-4. **Focus on Important Hyperparameters**: Learning rates and regularization weights typically have the largest impact.
+4. **Monitor Progress**: Check the `search_results_*.json` file periodically to see if the search is finding good configurations. With parallel execution, results are saved as each trial completes.
 
-5. **Check for Variance**: If results vary widely across seeds, increase `n_iterations` or average across multiple seeds.
+5. **Focus on Important Hyperparameters**: Learning rates and regularization weights typically have the largest impact. Consider fixing network architecture initially to reduce search space.
 
-6. **Use GPU if Available**: Add `--device cuda` to significantly speed up training.
+6. **Resource Management**:
+   - **CPU-only**: Use `--n_workers` equal to number of CPU cores for maximum parallelism
+   - **Single GPU**: Use `--n_workers 2-4` depending on GPU memory (trials share the GPU)
+   - **Multiple GPUs**: Modify the script to assign different GPUs to different workers
+
+7. **Check for Variance**: If results vary widely across seeds, increase `n_iterations` or average across multiple seeds.
 
 ## Troubleshooting
 
 ### Out of Memory
 - Reduce `n_trajectories`
 - Reduce network size (smaller `policy_hidden` and `value_hidden`)
+- **With parallel execution**: Reduce `--n_workers` to run fewer trials simultaneously
 - Use smaller batch sizes
 
 ### Training Instability
 - Search for lower learning rates
 - Increase `max_grad_norm` for more aggressive clipping
+
+### Parallel Execution Issues
+
+**Problem**: Trials are not running in parallel
+
+**Solution**:
+- Verify `--n_workers` is set to a value > 1
+- Check that you're not hitting resource limits (CPU, memory)
+- Look for "[Trial X] Starting training..." messages appearing concurrently
+
+**Problem**: Some trials fail with parallel execution
+
+**Solution**:
+- Check individual trial logs in `results/hyperparam_search/trial_XXX/stderr.log`
+- Failures are tracked in the results JSON (look for `"success": false`)
+- Reduce `--n_workers` if resource contention is causing failures
 - Increase `entropy_weight` for more exploration
 
 ### Poor Performance Across All Configs
