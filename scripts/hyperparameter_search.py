@@ -76,15 +76,18 @@ class SearchSpace:
 
     def sample_random(self) -> Dict[str, Any]:
         """Sample a random hyperparameter configuration."""
+        # Use random.choice from Python's random module for lists/tuples
+        import random
+
         config = {
-            'lr_policy': np.random.choice(self.lr_policy),
-            'lr_baseline': np.random.choice(self.lr_baseline),
-            'entropy_weight': np.random.choice(self.entropy_weight),
-            'action_reg_weight': np.random.choice(self.action_reg_weight),
-            'max_grad_norm': np.random.choice(self.max_grad_norm),
+            'lr_policy': float(np.random.choice(self.lr_policy)),
+            'lr_baseline': float(np.random.choice(self.lr_baseline)),
+            'entropy_weight': float(np.random.choice(self.entropy_weight)),
+            'action_reg_weight': float(np.random.choice(self.action_reg_weight)),
+            'max_grad_norm': float(np.random.choice(self.max_grad_norm)),
             'n_trajectories': int(np.random.choice(self.n_trajectories)),
-            'policy_hidden': np.random.choice(self.policy_hidden),
-            'value_hidden': np.random.choice(self.value_hidden),
+            'policy_hidden': random.choice(self.policy_hidden),
+            'value_hidden': random.choice(self.value_hidden),
         }
         return config
 
