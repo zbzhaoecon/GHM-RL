@@ -102,7 +102,8 @@ class TrainConfig:
     lr_baseline: float = 1e-3
     max_grad_norm: float = 0.5
     advantage_normalization: bool = True
-    entropy_weight: float = 0.01
+    entropy_weight: float = 0.05  # INCREASED from 0.01
+    action_reg_weight: float = 0.001  # NEW: action magnitude regularization
 
     # Network architecture
     policy_hidden: tuple = (64, 64)
@@ -138,7 +139,8 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--lr_policy", type=float, default=3e-4, help="Policy learning rate")
     parser.add_argument("--lr_baseline", type=float, default=1e-3, help="Baseline learning rate")
     parser.add_argument("--max_grad_norm", type=float, default=0.5, help="Max gradient norm for clipping")
-    parser.add_argument("--entropy_weight", type=float, default=0.01, help="Entropy regularization weight")
+    parser.add_argument("--entropy_weight", type=float, default=0.05, help="Entropy regularization weight")
+    parser.add_argument("--action_reg_weight", type=float, default=0.001, help="Action magnitude regularization weight")
     parser.add_argument("--no_baseline", action="store_true", help="Disable baseline (pure REINFORCE)")
 
     # Network architecture
@@ -173,6 +175,7 @@ def parse_args() -> TrainConfig:
         lr_baseline=args.lr_baseline,
         max_grad_norm=args.max_grad_norm,
         entropy_weight=args.entropy_weight,
+        action_reg_weight=args.action_reg_weight,
         policy_hidden=tuple(args.policy_hidden),
         value_hidden=tuple(args.value_hidden),
         use_baseline=not args.no_baseline,
@@ -483,6 +486,8 @@ def log_training_metrics(
         writer.add_scalar("loss/policy", metrics["loss/policy"], step)
     if "loss/baseline" in metrics:
         writer.add_scalar("loss/baseline", metrics["loss/baseline"], step)
+    if "loss/action_reg" in metrics:
+        writer.add_scalar("loss/action_reg", metrics["loss/action_reg"], step)
 
     # Advantages
     if "advantage/mean" in metrics:
@@ -503,6 +508,8 @@ def log_training_metrics(
         writer.add_scalar("policy/std_action_0", metrics["policy/std_action_0"], step)
     if "policy/entropy" in metrics:
         writer.add_scalar("policy/entropy", metrics["policy/entropy"], step)
+    if "policy/action_magnitude" in metrics:
+        writer.add_scalar("policy/action_magnitude", metrics["policy/action_magnitude"], step)
 
     # Gradients
     if "grad_norm/policy" in metrics:
@@ -660,6 +667,7 @@ def main():
         advantage_normalization=config.advantage_normalization,
         max_grad_norm=config.max_grad_norm,
         entropy_weight=config.entropy_weight,
+        action_reg_weight=config.action_reg_weight,
     )
 
     print(f"  Number of trajectories: {config.n_trajectories}")
@@ -668,6 +676,7 @@ def main():
     print(f"  Max grad norm: {config.max_grad_norm}")
     print(f"  Advantage normalization: {config.advantage_normalization}")
     print(f"  Entropy weight: {config.entropy_weight}")
+    print(f"  Action reg weight: {config.action_reg_weight}")
 
     # =========================================================================
     # Setup TensorBoard and save configuration
@@ -728,6 +737,19 @@ def main():
                 print(f"  Baseline Loss: {metrics['loss/baseline']:8.4f}")
             print(f"  Advantage: {metrics['advantage/mean']:7.3f} ± {metrics['advantage/std']:6.3f}")
             print(f"  Entropy: {metrics['policy/entropy']:6.4f}")
+            print(f"  Action Magnitude: {metrics['policy/action_magnitude']:6.4f}")
+
+            # DIAGNOSTIC: Check if policy has collapsed to zero
+            if metrics['policy/action_magnitude'] < 0.01:
+                print(f"  ⚠️  WARNING: Policy may have collapsed! Action magnitude very low.")
+
+            # DIAGNOSTIC: Sample test policy to see what it's doing
+            with torch.no_grad():
+                test_states = torch.linspace(0.5, 2.0, 5).unsqueeze(1).to(device)
+                test_actions, _ = policy.sample(test_states, deterministic=True)
+                print(f"  Test policy outputs (c=0.5-2.0):")
+                print(f"    Dividend (a_L): {test_actions[:, 0].cpu().numpy()}")
+                print(f"    Equity (a_E):   {test_actions[:, 1].cpu().numpy()}")
 
         # Evaluation
         if step % config.eval_freq == 0:
