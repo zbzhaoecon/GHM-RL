@@ -326,6 +326,11 @@ class MonteCarloPolicyGradient(Solver):
         # Get device from policy parameters
         device = next(self.policy.parameters()).device
 
+        # Check if dynamics has custom sampling (e.g., for time-augmented states)
+        if hasattr(self.dynamics, 'sample_initial_states'):
+            states = self.dynamics.sample_initial_states(n, device)
+            return states
+
         # Check if state_space has sample method
         if hasattr(state_space, 'sample'):
             states = state_space.sample(n)
