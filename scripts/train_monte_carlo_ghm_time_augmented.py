@@ -282,7 +282,7 @@ def load_checkpoint(
 def compute_policy_value_for_visualization(
     policy: GaussianPolicy,
     baseline: ValueNetwork,
-    dynamics,  # GHMEquityDynamics or GHMEquityTimeAugmentedDynamics
+    dynamics: GHMEquityTimeAugmentedDynamics,
     n_points: int = 100
 ) -> Dict[str, np.ndarray]:
     """
@@ -449,7 +449,7 @@ def log_policy_value_visualization(
     writer: SummaryWriter,
     policy: PolicyAdapter,
     baseline: ValueNetwork,
-    dynamics,  # GHMEquityDynamics or GHMEquityTimeAugmentedDynamics
+    dynamics: GHMEquityTimeAugmentedDynamics,
     step: int,
     config: TrainConfig,
 ):
