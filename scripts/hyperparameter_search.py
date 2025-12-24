@@ -29,8 +29,10 @@ import os
 import sys
 import subprocess
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import threading
 import numpy as np
 import itertools
 
@@ -138,6 +140,127 @@ class SearchConfig:
     resume: Optional[str] = None
 
 
+def run_single_trial(trial_data: Tuple[int, Dict[str, Any], SearchConfig]) -> Tuple[int, Dict[str, Any], Dict[str, float]]:
+    """
+    Run a single training trial with given hyperparameters.
+
+    This function is at module level to be picklable for multiprocessing.
+
+    Args:
+        trial_data: Tuple of (trial_num, hyperparam_config, search_config)
+
+    Returns:
+        Tuple of (trial_num, hyperparam_config, metrics)
+    """
+    trial_num, hyperparam_config, config = trial_data
+
+    # Create trial-specific directories
+    trial_dir = os.path.join(config.results_dir, f"trial_{trial_num:03d}")
+    log_dir = os.path.join(trial_dir, "logs")
+    ckpt_dir = os.path.join(trial_dir, "checkpoints")
+
+    os.makedirs(trial_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(ckpt_dir, exist_ok=True)
+
+    # Build command to run training script
+    cmd = [
+        sys.executable,  # Use same Python interpreter
+        "scripts/train_monte_carlo_ghm_time_augmented.py",
+        "--n_iterations", str(config.n_iterations),
+        "--dt", str(config.dt),
+        "--T", str(config.T),
+        "--seed", str(config.seed_base + trial_num),
+        "--device", str(config.device),
+        "--log_dir", log_dir,
+        "--log_freq", str(config.log_freq),
+        "--eval_freq", str(config.eval_freq),
+        "--ckpt_freq", str(config.ckpt_freq),
+        "--ckpt_dir", ckpt_dir,
+    ]
+
+    # Add hyperparameters to command
+    cmd.extend(["--lr_policy", str(hyperparam_config['lr_policy'])])
+    cmd.extend(["--lr_baseline", str(hyperparam_config['lr_baseline'])])
+    cmd.extend(["--entropy_weight", str(hyperparam_config['entropy_weight'])])
+    cmd.extend(["--action_reg_weight", str(hyperparam_config['action_reg_weight'])])
+    cmd.extend(["--max_grad_norm", str(hyperparam_config['max_grad_norm'])])
+    cmd.extend(["--n_trajectories", str(hyperparam_config['n_trajectories'])])
+
+    # Add network architecture
+    policy_hidden = hyperparam_config['policy_hidden']
+    value_hidden = hyperparam_config['value_hidden']
+    cmd.extend(["--policy_hidden"] + [str(x) for x in policy_hidden])
+    cmd.extend(["--value_hidden"] + [str(x) for x in value_hidden])
+
+    # Save hyperparameter config to trial directory
+    config_path = os.path.join(trial_dir, "hyperparameters.json")
+    with open(config_path, 'w') as f:
+        # Convert tuples to lists for JSON serialization
+        config_serializable = {
+            k: list(v) if isinstance(v, tuple) else v
+            for k, v in hyperparam_config.items()
+        }
+        json.dump(config_serializable, f, indent=2)
+
+    # Run training
+    print(f"[Trial {trial_num}] Starting training...")
+    print(f"[Trial {trial_num}] Command: {' '.join(cmd)}")
+
+    stdout_log = os.path.join(trial_dir, "stdout.log")
+    stderr_log = os.path.join(trial_dir, "stderr.log")
+
+    with open(stdout_log, 'w') as fout, open(stderr_log, 'w') as ferr:
+        process = subprocess.run(
+            cmd,
+            stdout=fout,
+            stderr=ferr,
+            cwd=os.getcwd(),
+        )
+
+    # Check if training succeeded
+    if process.returncode != 0:
+        print(f"[Trial {trial_num}] ⚠️  Training failed with return code {process.returncode}")
+        print(f"[Trial {trial_num}]    Check logs: {stderr_log}")
+        return (trial_num, hyperparam_config, {
+            'best_return': -float('inf'),
+            'final_return': -float('inf'),
+            'success': False,
+        })
+
+    # Extract best return from checkpoint
+    best_model_path = os.path.join(ckpt_dir, "best_model.pt")
+    final_model_path = os.path.join(ckpt_dir, "final_model.pt")
+
+    best_return = -float('inf')
+    final_return = -float('inf')
+
+    try:
+        import torch
+        if os.path.exists(best_model_path):
+            checkpoint = torch.load(best_model_path, map_location='cpu')
+            best_return = checkpoint.get('best_return', -float('inf'))
+
+        if os.path.exists(final_model_path):
+            checkpoint = torch.load(final_model_path, map_location='cpu')
+            final_return = checkpoint.get('best_return', -float('inf'))
+    except Exception as e:
+        print(f"[Trial {trial_num}] ⚠️  Could not load checkpoint: {e}")
+
+    metrics = {
+        'best_return': best_return,
+        'final_return': final_return,
+        'success': True,
+        'stdout_log': stdout_log,
+        'stderr_log': stderr_log,
+        'checkpoint_dir': ckpt_dir,
+    }
+
+    print(f"[Trial {trial_num}] ✓ Complete - Best return: {best_return:.4f}")
+
+    return (trial_num, hyperparam_config, metrics)
+
+
 class HyperparameterSearch:
     """Hyperparameter search orchestrator."""
 
@@ -165,7 +288,7 @@ class HyperparameterSearch:
             self.load_results(config.resume)
 
     def run(self):
-        """Run hyperparameter search."""
+        """Run hyperparameter search with optional parallel execution."""
         print("=" * 80)
         print("Hyperparameter Search for Monte Carlo Policy Gradient")
         print("=" * 80)
@@ -184,9 +307,24 @@ class HyperparameterSearch:
 
         print(f"\nTotal configurations to evaluate: {len(configs)}")
         print(f"Number of workers: {self.config.n_workers}")
+
+        if self.config.n_workers > 1:
+            print(f"🚀 Running trials in PARALLEL with {self.config.n_workers} workers")
+        else:
+            print("Running trials sequentially (n_workers=1)")
         print()
 
-        # Run trials
+        # Run trials in parallel or sequentially
+        if self.config.n_workers > 1:
+            self._run_parallel(configs)
+        else:
+            self._run_sequential(configs)
+
+        # Print final summary
+        self.print_summary()
+
+    def _run_sequential(self, configs: List[Dict[str, Any]]):
+        """Run trials sequentially (single worker)."""
         for trial_idx, hyperparam_config in enumerate(configs):
             trial_num = len(self.results) + 1
 
@@ -199,32 +337,86 @@ class HyperparameterSearch:
             print()
 
             # Run training with this configuration
-            result = self.run_trial(trial_num, hyperparam_config)
+            trial_data = (trial_num, hyperparam_config, self.config)
+            _, _, metrics = run_single_trial(trial_data)
 
             # Store results
-            self.results.append({
-                'trial_num': trial_num,
-                'hyperparameters': hyperparam_config,
-                'metrics': result,
-            })
+            self._process_trial_result(trial_num, hyperparam_config, metrics, len(configs))
 
-            # Update best configuration
-            if result['best_return'] > self.best_return:
-                self.best_return = result['best_return']
-                self.best_config = hyperparam_config.copy()
-                print(f"\n🏆 New best configuration found!")
-                print(f"   Best return: {self.best_return:.4f}")
+    def _run_parallel(self, configs: List[Dict[str, Any]]):
+        """Run trials in parallel using ProcessPoolExecutor."""
+        # Prepare trial data for all trials
+        trial_data_list = []
+        for trial_idx, hyperparam_config in enumerate(configs):
+            trial_num = len(self.results) + trial_idx + 1
+            trial_data_list.append((trial_num, hyperparam_config, self.config))
 
-            # Save results after each trial
-            self.save_results()
+        # Track completed and pending trials
+        total_trials = len(trial_data_list)
+        completed_count = 0
+        lock = threading.Lock()
 
-            print(f"\n{'=' * 80}")
-            print(f"Trial {trial_num} complete")
-            print(f"Best return so far: {self.best_return:.4f}")
-            print(f"{'=' * 80}\n")
+        # Submit all jobs to executor
+        with ProcessPoolExecutor(max_workers=self.config.n_workers) as executor:
+            # Submit all trials
+            future_to_trial = {
+                executor.submit(run_single_trial, trial_data): trial_data[0]
+                for trial_data in trial_data_list
+            }
 
-        # Print final summary
-        self.print_summary()
+            print(f"Submitted {total_trials} trials to {self.config.n_workers} workers\n")
+
+            # Process completed trials as they finish
+            for future in as_completed(future_to_trial):
+                trial_num = future_to_trial[future]
+
+                try:
+                    trial_num, hyperparam_config, metrics = future.result()
+
+                    with lock:
+                        completed_count += 1
+
+                        print(f"\n{'=' * 80}")
+                        print(f"Trial {trial_num} completed ({completed_count}/{total_trials})")
+                        print(f"{'=' * 80}")
+
+                        # Store and process result
+                        self._process_trial_result(trial_num, hyperparam_config, metrics, total_trials)
+
+                except Exception as exc:
+                    print(f"\n⚠️  Trial {trial_num} generated an exception: {exc}")
+                    with lock:
+                        completed_count += 1
+
+        print(f"\n{'=' * 80}")
+        print(f"All {total_trials} trials completed!")
+        print(f"{'=' * 80}\n")
+
+    def _process_trial_result(self, trial_num: int, hyperparam_config: Dict[str, Any],
+                              metrics: Dict[str, float], total_trials: int):
+        """Process and store a completed trial result."""
+        # Store results
+        self.results.append({
+            'trial_num': trial_num,
+            'hyperparameters': hyperparam_config,
+            'metrics': metrics,
+        })
+
+        # Update best configuration
+        if metrics['best_return'] > self.best_return:
+            self.best_return = metrics['best_return']
+            self.best_config = hyperparam_config.copy()
+            print(f"\n🏆 New best configuration found!")
+            print(f"   Best return: {self.best_return:.4f}")
+            print(f"   Hyperparameters:")
+            for key, value in hyperparam_config.items():
+                print(f"     {key}: {value}")
+
+        # Save results after each trial
+        self.save_results()
+
+        print(f"\nBest return so far: {self.best_return:.4f}")
+        print(f"Progress: {len(self.results)}/{total_trials} trials completed")
 
     def generate_random_configs(self) -> List[Dict[str, Any]]:
         """Generate random hyperparameter configurations."""
@@ -233,111 +425,6 @@ class HyperparameterSearch:
             config = self.search_space.sample_random()
             configs.append(config)
         return configs
-
-    def run_trial(self, trial_num: int, hyperparam_config: Dict[str, Any]) -> Dict[str, float]:
-        """Run a single training trial with given hyperparameters."""
-        # Create trial-specific directories
-        trial_dir = os.path.join(self.config.results_dir, f"trial_{trial_num:03d}")
-        log_dir = os.path.join(trial_dir, "logs")
-        ckpt_dir = os.path.join(trial_dir, "checkpoints")
-
-        os.makedirs(trial_dir, exist_ok=True)
-        os.makedirs(log_dir, exist_ok=True)
-        os.makedirs(ckpt_dir, exist_ok=True)
-
-        # Build command to run training script
-        cmd = [
-            sys.executable,  # Use same Python interpreter
-            "scripts/train_monte_carlo_ghm_time_augmented.py",
-            "--n_iterations", str(self.config.n_iterations),
-            "--dt", str(self.config.dt),
-            "--T", str(self.config.T),
-            "--seed", str(self.config.seed_base + trial_num),
-            "--device", str(self.config.device),
-            "--log_dir", log_dir,
-            "--log_freq", str(self.config.log_freq),
-            "--eval_freq", str(self.config.eval_freq),
-            "--ckpt_freq", str(self.config.ckpt_freq),
-            "--ckpt_dir", ckpt_dir,
-        ]
-
-        # Add hyperparameters to command
-        cmd.extend(["--lr_policy", str(hyperparam_config['lr_policy'])])
-        cmd.extend(["--lr_baseline", str(hyperparam_config['lr_baseline'])])
-        cmd.extend(["--entropy_weight", str(hyperparam_config['entropy_weight'])])
-        cmd.extend(["--action_reg_weight", str(hyperparam_config['action_reg_weight'])])
-        cmd.extend(["--max_grad_norm", str(hyperparam_config['max_grad_norm'])])
-        cmd.extend(["--n_trajectories", str(hyperparam_config['n_trajectories'])])
-
-        # Add network architecture
-        policy_hidden = hyperparam_config['policy_hidden']
-        value_hidden = hyperparam_config['value_hidden']
-        cmd.extend(["--policy_hidden"] + [str(x) for x in policy_hidden])
-        cmd.extend(["--value_hidden"] + [str(x) for x in value_hidden])
-
-        # Save hyperparameter config to trial directory
-        config_path = os.path.join(trial_dir, "hyperparameters.json")
-        with open(config_path, 'w') as f:
-            # Convert tuples to lists for JSON serialization
-            config_serializable = {
-                k: list(v) if isinstance(v, tuple) else v
-                for k, v in hyperparam_config.items()
-            }
-            json.dump(config_serializable, f, indent=2)
-
-        # Run training
-        print(f"Running command:")
-        print(" ".join(cmd))
-        print()
-
-        stdout_log = os.path.join(trial_dir, "stdout.log")
-        stderr_log = os.path.join(trial_dir, "stderr.log")
-
-        with open(stdout_log, 'w') as fout, open(stderr_log, 'w') as ferr:
-            process = subprocess.run(
-                cmd,
-                stdout=fout,
-                stderr=ferr,
-                cwd=os.getcwd(),
-            )
-
-        # Check if training succeeded
-        if process.returncode != 0:
-            print(f"⚠️  Training failed with return code {process.returncode}")
-            print(f"   Check logs: {stderr_log}")
-            return {
-                'best_return': -float('inf'),
-                'final_return': -float('inf'),
-                'success': False,
-            }
-
-        # Extract best return from checkpoint
-        best_model_path = os.path.join(ckpt_dir, "best_model.pt")
-        final_model_path = os.path.join(ckpt_dir, "final_model.pt")
-
-        best_return = -float('inf')
-        final_return = -float('inf')
-
-        try:
-            import torch
-            if os.path.exists(best_model_path):
-                checkpoint = torch.load(best_model_path, map_location='cpu')
-                best_return = checkpoint.get('best_return', -float('inf'))
-
-            if os.path.exists(final_model_path):
-                checkpoint = torch.load(final_model_path, map_location='cpu')
-                final_return = checkpoint.get('best_return', -float('inf'))
-        except Exception as e:
-            print(f"⚠️  Could not load checkpoint: {e}")
-
-        return {
-            'best_return': best_return,
-            'final_return': final_return,
-            'success': True,
-            'stdout_log': stdout_log,
-            'stderr_log': stderr_log,
-            'checkpoint_dir': ckpt_dir,
-        }
 
     def save_results(self):
         """Save search results to JSON file."""
