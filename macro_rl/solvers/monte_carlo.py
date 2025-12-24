@@ -58,7 +58,8 @@ class MonteCarloPolicyGradient(Solver):
         batch_size: int = 1000,
         advantage_normalization: bool = True,
         max_grad_norm: float = 0.5,
-        entropy_weight: float = 0.01,
+        entropy_weight: float = 0.05,  # INCREASED from 0.01 to encourage exploration
+        action_reg_weight: float = 0.001,  # NEW: regularization to penalize zero actions
     ):
         """
         Initialize Monte Carlo solver.
@@ -74,6 +75,7 @@ class MonteCarloPolicyGradient(Solver):
             advantage_normalization: Whether to normalize advantages
             max_grad_norm: Gradient clipping threshold
             entropy_weight: Entropy regularization weight (encourage exploration)
+            action_reg_weight: Action magnitude regularization weight
         """
         self.policy = policy
         self.simulator = simulator
@@ -83,6 +85,7 @@ class MonteCarloPolicyGradient(Solver):
         self.advantage_normalization = advantage_normalization
         self.max_grad_norm = max_grad_norm
         self.entropy_weight = entropy_weight
+        self.action_reg_weight = action_reg_weight
 
         # Optimizers
         self.policy_optimizer = Adam(policy.parameters(), lr=lr_policy)
@@ -170,16 +173,29 @@ class MonteCarloPolicyGradient(Solver):
         else:
             advantages = returns.clone()
 
-        # Normalize advantages
+        # Adaptive advantage normalization (only normalize if there's real variance)
         if self.advantage_normalization:
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+            adv_std = advantages.std()
+            if adv_std > 1e-3:
+                # Normal normalization when there's real variance
+                advantages = (advantages - advantages.mean()) / adv_std
+            else:
+                # Just center when variance is too low (avoids noise amplification)
+                advantages = advantages - advantages.mean()
 
         # 4. Compute policy loss (REINFORCE)
         policy_loss = self._compute_policy_loss(trajectories, advantages)
 
         # 4b. Add entropy bonus (encourage exploration)
         entropy = self.policy.entropy(initial_states).mean()
-        total_loss = policy_loss - self.entropy_weight * entropy
+
+        # 4c. Add action magnitude regularization (penalize zero actions)
+        # This helps prevent the policy from collapsing to "do nothing"
+        action_magnitude = trajectories.actions.abs().mean()
+        action_reg_loss = -self.action_reg_weight * action_magnitude
+
+        # Total loss combines all objectives
+        total_loss = policy_loss - self.entropy_weight * entropy + action_reg_loss
 
         # 5. Update policy
         self.policy_optimizer.zero_grad()
@@ -206,8 +222,14 @@ class MonteCarloPolicyGradient(Solver):
         with torch.no_grad():
             # Get policy statistics
             dist = self.policy(initial_states)
-            mean_actions = dist.mean  # (B, action_dim)
-            std_actions = dist.stddev  # (B, action_dim)
+            if hasattr(dist, 'mode'):
+                # TanhNormal distribution
+                mean_actions = dist.mode  # (B, action_dim)
+                std_actions = dist.stddev  # (B, action_dim)
+            else:
+                # Normal distribution
+                mean_actions = dist.mean  # (B, action_dim)
+                std_actions = dist.stddev  # (B, action_dim)
 
             metrics = {
                 # Returns
@@ -220,6 +242,7 @@ class MonteCarloPolicyGradient(Solver):
                 'loss/policy': policy_loss.item(),
                 'loss/total': total_loss.item(),
                 'loss/baseline': baseline_loss if isinstance(baseline_loss, float) else baseline_loss.item(),
+                'loss/action_reg': action_reg_loss.item(),
 
                 # Advantages
                 'advantage/mean': advantages.mean().item(),
@@ -236,6 +259,7 @@ class MonteCarloPolicyGradient(Solver):
                 'policy/mean_action_0': mean_actions[:, 0].mean().item(),
                 'policy/std_action_0': std_actions[:, 0].mean().item(),
                 'policy/entropy': self.policy.entropy(initial_states).mean().item(),
+                'policy/action_magnitude': action_magnitude.item(),
 
                 # Gradients
                 'grad_norm/policy': policy_grad_norm.item() if isinstance(policy_grad_norm, torch.Tensor) else float(policy_grad_norm),

@@ -4,12 +4,14 @@ import torch.nn as nn
 from torch import Tensor
 from torch.distributions import Normal
 
+from macro_rl.distributions import TanhNormal
+
 
 class GaussianPolicy(nn.Module):
     """Gaussian policy with reparameterization and (optional) bounds.
 
     If action_bounds is provided, actions are squashed into [low, high]
-    via a sigmoid transform.
+    via a tanh transform with proper Jacobian correction for log probabilities.
     """
 
     def __init__(
@@ -41,6 +43,11 @@ class GaussianPolicy(nn.Module):
         layers.append(nn.Linear(prev, output_dim))
         self.mean_net = nn.Sequential(*layers)
 
+        # Better initialization: bias toward positive raw actions
+        # This prevents the policy from collapsing to zero actions
+        nn.init.uniform_(self.mean_net[-1].weight, -0.01, 0.01)
+        nn.init.constant_(self.mean_net[-1].bias, 1.0)
+
         # Log std parameters (state-independent for now)
         self.log_std = nn.Parameter(torch.zeros(output_dim))
 
@@ -51,17 +58,30 @@ class GaussianPolicy(nn.Module):
         log_std = self.log_std.clamp(*self.log_std_bounds)
         return mean, log_std
 
-    def get_distribution(self, state: Tensor) -> Normal:
+    def get_distribution(self, state: Tensor):
+        """Get distribution over actions.
+
+        Returns TanhNormal if action_bounds are set, otherwise Normal.
+        """
         mean, log_std = self._get_mean_log_std(state)
         std = log_std.exp()
-        return Normal(mean, std)
+
+        if self.action_bounds is not None:
+            low, high = self.action_bounds
+            return TanhNormal(mean, std, low, high)
+        else:
+            return Normal(mean, std)
 
     # ---- Public API ----
 
     def forward(self, state: Tensor) -> Tensor:
-        """Return mean action (unbounded)."""
-        mean, _ = self._get_mean_log_std(state)
-        return mean
+        """Return mean action (deterministic mode)."""
+        dist = self.get_distribution(state)
+        if self.action_bounds is not None:
+            # For TanhNormal, return the mode (transformed mean)
+            return dist.mode
+        else:
+            return dist.mean
 
     def sample(
         self,
@@ -71,24 +91,23 @@ class GaussianPolicy(nn.Module):
         """Sample an action and return (action, log_prob).
 
         Uses rsample() for reparameterization when stochastic.
+        Now properly handles bounded actions with TanhNormal distribution.
         """
         dist = self.get_distribution(state)
+
         if deterministic:
-            raw_action = dist.mean
+            # Use mode for bounded, mean for unbounded
+            if self.action_bounds is not None:
+                action = dist.mode
+            else:
+                action = dist.mean
         else:
-            raw_action = dist.rsample()
-        log_prob = dist.log_prob(raw_action).sum(dim=-1)
+            # Stochastic sampling with reparameterization
+            action = dist.rsample()
 
-        action = raw_action
-        if self.action_bounds is not None:
-            low, high = self.action_bounds
-            # Squash with sigmoid into [low, high]
-            action = low + (high - low) * torch.sigmoid(raw_action)
+        # Compute log probability (now correct for bounded actions!)
+        log_prob = dist.log_prob(action)
 
-            # NOTE: for exact log_probs under squashing we would need
-            # to include the Jacobian of the transform. For now, we
-            # keep log_prob under the base Gaussian only, which is
-            # usually fine for advantage-based updates.
         return action, log_prob
 
     def sample_with_noise(
@@ -105,10 +124,14 @@ class GaussianPolicy(nn.Module):
         std = log_std.exp()
         raw_action = mean + std * noise
 
-        action = raw_action
         if self.action_bounds is not None:
+            # Apply tanh squashing for bounded actions
             low, high = self.action_bounds
-            action = low + (high - low) * torch.sigmoid(raw_action)
+            tanh_raw = torch.tanh(raw_action)
+            action = low + (high - low) * (tanh_raw + 1.0) / 2.0
+        else:
+            action = raw_action
+
         return action
 
     def log_prob_and_entropy(
@@ -118,13 +141,20 @@ class GaussianPolicy(nn.Module):
     ) -> Tuple[Tensor, Tensor]:
         """Compute log probability and entropy for given actions.
 
-        For now we treat `action` as if it lived in the unconstrained
-        Gaussian space; this is an approximation if you've squashed
-        actions. For advantage-based methods it's usually acceptable.
+        Now correctly computes log probabilities for bounded actions
+        using TanhNormal with proper Jacobian correction.
         """
         dist = self.get_distribution(state)
-        log_prob = dist.log_prob(action).sum(dim=-1)
-        entropy = dist.entropy().sum(dim=-1)
+
+        # TanhNormal.log_prob already returns summed log prob (batch,)
+        # Normal.log_prob returns per-dimension (batch, action_dim)
+        log_prob = dist.log_prob(action)
+        if not self.action_bounds:
+            log_prob = log_prob.sum(dim=-1)
+
+        # Entropy is also summed over action dimensions
+        entropy = dist.entropy()
+
         return log_prob, entropy
 
     # Convenience for TrajectorySimulator interface
