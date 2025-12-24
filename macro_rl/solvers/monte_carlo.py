@@ -59,7 +59,7 @@ class MonteCarloPolicyGradient(Solver):
         advantage_normalization: bool = True,
         max_grad_norm: float = 0.5,
         entropy_weight: float = 0.05,  # INCREASED from 0.01 to encourage exploration
-        action_reg_weight: float = 0.001,  # NEW: regularization to penalize zero actions
+        action_reg_weight: float = 0.01,  # NEW: regularization to penalize zero actions (INCREASED)
     ):
         """
         Initialize Monte Carlo solver.
@@ -185,6 +185,10 @@ class MonteCarloPolicyGradient(Solver):
 
         # 4. Compute policy loss (REINFORCE)
         policy_loss = self._compute_policy_loss(trajectories, advantages)
+
+        # Clip policy loss to prevent numerical explosions
+        # (can happen when log probs become extreme at action boundaries)
+        policy_loss = torch.clamp(policy_loss, -1000.0, 1000.0)
 
         # 4b. Add entropy bonus (encourage exploration)
         entropy = self.policy.entropy(initial_states).mean()

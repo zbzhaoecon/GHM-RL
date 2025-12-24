@@ -103,7 +103,7 @@ class TrainConfig:
     max_grad_norm: float = 0.5
     advantage_normalization: bool = True
     entropy_weight: float = 0.05  # INCREASED from 0.01
-    action_reg_weight: float = 0.001  # NEW: action magnitude regularization
+    action_reg_weight: float = 0.01  # NEW: action magnitude regularization (INCREASED)
 
     # Network architecture
     policy_hidden: tuple = (64, 64)
@@ -140,7 +140,7 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--lr_baseline", type=float, default=1e-3, help="Baseline learning rate")
     parser.add_argument("--max_grad_norm", type=float, default=0.5, help="Max gradient norm for clipping")
     parser.add_argument("--entropy_weight", type=float, default=0.05, help="Entropy regularization weight")
-    parser.add_argument("--action_reg_weight", type=float, default=0.001, help="Action magnitude regularization weight")
+    parser.add_argument("--action_reg_weight", type=float, default=0.01, help="Action magnitude regularization weight")
     parser.add_argument("--no_baseline", action="store_true", help="Disable baseline (pure REINFORCE)")
 
     # Network architecture
