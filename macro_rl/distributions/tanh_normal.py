@@ -32,12 +32,12 @@ class TanhNormal(Distribution):
         >>> import torch
         >>> from macro_rl.distributions import TanhNormal
         >>>
-        >>> mean = torch.zeros(10, 2)
-        >>> std = torch.ones(10, 2)
+        >>> loc = torch.zeros(10, 2)  # Mean of base Gaussian
+        >>> scale = torch.ones(10, 2)  # Std of base Gaussian
         >>> low = torch.tensor([0.0, 0.0])
         >>> high = torch.tensor([10.0, 0.5])
         >>>
-        >>> dist = TanhNormal(mean, std, low, high)
+        >>> dist = TanhNormal(loc, scale, low, high)
         >>> actions = dist.rsample()  # Sample with reparameterization
         >>> log_probs = dist.log_prob(actions)  # Correct log probabilities
     """
