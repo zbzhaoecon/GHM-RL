@@ -122,10 +122,11 @@ def compute_hjb_residuals(results: dict, dynamics: GHMEquityDynamics, dt: float 
         drift = dynamics.drift(states, actions_t)  # [N, 1]
         diffusion = dynamics.diffusion(states)  # [N, 1]
 
-        # Reward
-        a_L = actions_t[:, 0:1]
-        a_E = actions_t[:, 1:2]
-        reward = a_L * dt - (1 + dynamics.p.lambda_) * a_E  # [N, 1]
+        # Reward for model-based training (flow approximation)
+        # Per-step reward: a_L * dt - a_E (net payout to shareholders)
+        a_L = actions_t[:, 0:1]  # Dividend rate
+        a_E = actions_t[:, 1:2]  # Equity issuance rate
+        reward = a_L * dt - a_E  # [N, 1]
 
         # HJB residual: r(s,a) + V_s·f(s,a) + 0.5·V_ss·σ²(s,a) - ρ·V
         discount_rate = dynamics.p.r - dynamics.p.mu
@@ -326,11 +327,47 @@ def create_action_distribution_plots(ac: ActorCritic, state_space: StateSpace, o
     return fig
 
 
+def analyze_barrier_structure(results: dict):
+    """Analyze the learned barrier structure."""
+    c_values = results['c_values']
+    dividends = results['actions_mean'][:, 0]
+    equity = results['actions_mean'][:, 1]
+
+    # Find dividend barrier (where dividends become significant)
+    div_threshold = np.percentile(dividends[dividends > 0.01], 10) if any(dividends > 0.01) else 0.01
+    dividend_barrier_idx = np.where(dividends > div_threshold)[0]
+    dividend_barrier = c_values[dividend_barrier_idx[0]] if len(dividend_barrier_idx) > 0 else None
+
+    # Find equity issuance region (low cash)
+    equity_threshold = np.percentile(equity[equity > 0.01], 90) if any(equity > 0.01) else 0.01
+    equity_region_idx = np.where(equity > equity_threshold)[0]
+    equity_region = (c_values[equity_region_idx[0]], c_values[equity_region_idx[-1]]) if len(equity_region_idx) > 0 else None
+
+    return {
+        'dividend_barrier': dividend_barrier,
+        'equity_region': equity_region,
+    }
+
+
 def print_summary_statistics(results: dict, hjb_residuals: np.ndarray):
     """Print summary statistics of the policy and value function."""
     print("\n" + "="*70)
     print("SUMMARY STATISTICS")
     print("="*70)
+
+    # Barrier analysis
+    barrier_info = analyze_barrier_structure(results)
+    print("\nBarrier Structure:")
+    if barrier_info['dividend_barrier'] is not None:
+        print(f"  Dividend barrier c*:    {barrier_info['dividend_barrier']:.4f}")
+        print(f"    (Theory: c* ≈ 0.6-0.8 for default parameters)")
+    else:
+        print(f"  Dividend barrier c*:    Not clearly identified")
+
+    if barrier_info['equity_region'] is not None:
+        print(f"  Equity region:          [{barrier_info['equity_region'][0]:.4f}, {barrier_info['equity_region'][1]:.4f}]")
+    else:
+        print(f"  Equity region:          Not clearly identified")
 
     print("\nValue Function:")
     print(f"  Mean V(c):      {results['values'].mean():.4f}")
@@ -357,6 +394,13 @@ def print_summary_statistics(results: dict, hjb_residuals: np.ndarray):
     print(f"  Std:            {hjb_residuals.std():.6f}")
     print(f"  Mean Abs:       {np.abs(hjb_residuals).mean():.6f}")
     print(f"  Max Abs:        {np.abs(hjb_residuals).max():.6f}")
+
+    if np.abs(hjb_residuals).mean() < 0.01:
+        print(f"  ✓ HJB equation well-satisfied (residuals < 0.01)")
+    elif np.abs(hjb_residuals).mean() < 0.1:
+        print(f"  ⚠ HJB residuals moderate (consider more training)")
+    else:
+        print(f"  ✗ Large HJB residuals (policy may not be optimal)")
 
     print("\n" + "="*70)
 
