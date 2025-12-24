@@ -32,20 +32,20 @@ class TanhNormal(Distribution):
         >>> import torch
         >>> from macro_rl.distributions import TanhNormal
         >>>
-        >>> mean = torch.zeros(10, 2)
-        >>> std = torch.ones(10, 2)
+        >>> loc = torch.zeros(10, 2)  # Mean of base Gaussian
+        >>> scale = torch.ones(10, 2)  # Std of base Gaussian
         >>> low = torch.tensor([0.0, 0.0])
         >>> high = torch.tensor([10.0, 0.5])
         >>>
-        >>> dist = TanhNormal(mean, std, low, high)
+        >>> dist = TanhNormal(loc, scale, low, high)
         >>> actions = dist.rsample()  # Sample with reparameterization
         >>> log_probs = dist.log_prob(actions)  # Correct log probabilities
     """
 
     def __init__(
         self,
-        mean: Tensor,
-        std: Tensor,
+        loc: Tensor,
+        scale: Tensor,
         low: Tensor,
         high: Tensor,
         epsilon: float = 1e-6,
@@ -54,27 +54,27 @@ class TanhNormal(Distribution):
         Initialize TanhNormal distribution.
 
         Args:
-            mean: Mean of base Gaussian (batch, action_dim)
-            std: Std of base Gaussian (batch, action_dim)
+            loc: Mean of base Gaussian (batch, action_dim)
+            scale: Std of base Gaussian (batch, action_dim)
             low: Lower action bounds (action_dim,)
             high: Upper action bounds (action_dim,)
             epsilon: Small constant for numerical stability
         """
-        self.mean = mean
-        self.std = std
-        self.low = low.to(mean.device)
-        self.high = high.to(mean.device)
+        self.loc = loc
+        self.scale = scale
+        self.low = low.to(loc.device)
+        self.high = high.to(loc.device)
         self.epsilon = epsilon
 
         # Base Gaussian distribution
-        self.base_dist = Normal(mean, std)
+        self.base_dist = Normal(loc, scale)
 
         # Validate shapes
-        assert mean.shape == std.shape, "mean and std must have same shape"
+        assert loc.shape == scale.shape, "loc and scale must have same shape"
         assert low.shape == high.shape, "low and high must have same shape"
-        assert mean.shape[-1] == low.shape[-1], "action dimension mismatch"
+        assert loc.shape[-1] == low.shape[-1], "action dimension mismatch"
 
-        super().__init__(batch_shape=mean.shape[:-1], event_shape=mean.shape[-1:])
+        super().__init__(batch_shape=loc.shape[:-1], event_shape=loc.shape[-1:])
 
     def rsample(self, sample_shape: torch.Size = torch.Size()) -> Tensor:
         """
@@ -176,9 +176,22 @@ class TanhNormal(Distribution):
             Mode actions (batch, action_dim)
         """
         # Mode of base Gaussian
-        z_mode = self.mean
+        z_mode = self.loc
         tanh_z = torch.tanh(z_mode)
         return self.low + (self.high - self.low) * (tanh_z + 1.0) / 2.0
+
+    @property
+    def mean(self) -> Tensor:
+        """
+        Approximate mean of the transformed distribution.
+
+        For computational efficiency, we use the mode as an approximation.
+        The true mean is intractable for this distribution.
+
+        Returns:
+            Approximate mean (batch, action_dim)
+        """
+        return self.mode
 
     @property
     def stddev(self) -> Tensor:
@@ -190,4 +203,4 @@ class TanhNormal(Distribution):
         Returns:
             Standard deviation (batch, action_dim)
         """
-        return self.std
+        return self.scale
