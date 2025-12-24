@@ -264,11 +264,14 @@ class MonteCarloPolicyGradient(Solver):
         log_probs = log_probs_flat.reshape(B, T)  # (B, T)
 
         # REINFORCE loss (negative for maximization)
-        # Broadcast advantages over time, weighted by masks
-        # Loss = -E_t[ log π(aₜ|sₜ) · A(s₀) ]
-        # Normalize by total number of active steps, not just batch size
-        n_active_steps = trajectories.masks.sum() + 1e-8
-        policy_loss = -(log_probs * trajectories.masks * advantages.unsqueeze(-1)).sum() / n_active_steps
+        # Standard REINFORCE: ∇J = E_τ [ (Σ_t log π(a_t|s_t)) · (G - b) ]
+        # where the expectation is over trajectories, not timesteps
+
+        # Sum log probabilities over time for each trajectory
+        log_prob_per_traj = (log_probs * trajectories.masks).sum(dim=1)  # (B,)
+
+        # REINFORCE gradient estimator: average over trajectories
+        policy_loss = -(log_prob_per_traj * advantages).mean()
 
         return policy_loss
 
