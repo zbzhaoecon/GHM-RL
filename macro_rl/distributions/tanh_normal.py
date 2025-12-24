@@ -60,6 +60,11 @@ class TanhNormal(Distribution):
             high: Upper action bounds (action_dim,)
             epsilon: Small constant for numerical stability
         """
+        # Handle broadcasting: if scale is (action_dim,) and loc is (batch, action_dim),
+        # expand scale to (batch, action_dim)
+        if scale.dim() < loc.dim():
+            scale = scale.expand_as(loc)
+
         self.loc = loc
         self.scale = scale
         self.low = low.to(loc.device)
@@ -69,8 +74,8 @@ class TanhNormal(Distribution):
         # Base Gaussian distribution
         self.base_dist = Normal(loc, scale)
 
-        # Validate shapes
-        assert loc.shape == scale.shape, "loc and scale must have same shape"
+        # Validate shapes (after broadcasting)
+        assert loc.shape == scale.shape, f"loc and scale must have same shape, got {loc.shape} and {scale.shape}"
         assert low.shape == high.shape, "low and high must have same shape"
         assert loc.shape[-1] == low.shape[-1], "action dimension mismatch"
 
