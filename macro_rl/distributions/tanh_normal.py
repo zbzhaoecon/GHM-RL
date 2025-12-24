@@ -125,8 +125,10 @@ class TanhNormal(Distribution):
         Returns:
             Log probabilities (batch,) - summed over action dimensions
         """
-        # Clamp actions to valid range for numerical stability
-        action = torch.clamp(action, self.low + self.epsilon, self.high - self.epsilon)
+        # Clamp actions away from boundaries for numerical stability
+        # Use larger epsilon to prevent boundary issues
+        eps = torch.max(self.epsilon, 1e-4 * (self.high - self.low))
+        action = torch.clamp(action, self.low + eps, self.high - eps)
 
         # Inverse transform: action -> z
         # action = low + (high - low) * (tanh(z) + 1) / 2
@@ -135,8 +137,8 @@ class TanhNormal(Distribution):
         # => z = arctanh(2*(action - low)/(high - low) - 1)
 
         normalized = 2.0 * (action - self.low) / (self.high - self.low) - 1.0
-        # Clamp to valid tanh range
-        normalized = torch.clamp(normalized, -1.0 + self.epsilon, 1.0 - self.epsilon)
+        # Clamp to valid tanh range (more conservative)
+        normalized = torch.clamp(normalized, -0.999, 0.999)
         z = torch.atanh(normalized)
 
         # Log probability of z under base Gaussian
@@ -146,9 +148,15 @@ class TanhNormal(Distribution):
         # da/dz = (high - low) / 2 * (1 - tanh²(z))
         # log|da/dz| = log((high - low) / 2) + log(1 - tanh²(z))
 
-        tanh_z = torch.tanh(z)
+        # Use normalized to avoid recomputing tanh (more stable)
+        # normalized = tanh(z), so 1 - tanh²(z) = 1 - normalized²
+        one_minus_tanh_sq = 1.0 - normalized.pow(2)
+
+        # Clamp to prevent log(0)
+        one_minus_tanh_sq = torch.clamp(one_minus_tanh_sq, min=1e-6)
+
         jacobian_correction = torch.log((self.high - self.low) / 2.0 + self.epsilon) + \
-                             torch.log(1.0 - tanh_z.pow(2) + self.epsilon)
+                             torch.log(one_minus_tanh_sq)
 
         # Log probability with change of variables
         # log π(action) = log π(z) - log|da/dz|
