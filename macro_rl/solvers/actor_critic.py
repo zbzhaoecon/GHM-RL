@@ -19,6 +19,7 @@ from macro_rl.dynamics.base import ContinuousTimeDynamics
 from macro_rl.control.base import ControlSpec
 from macro_rl.rewards.base import RewardFunction
 from macro_rl.simulation.trajectory import TrajectorySimulator, TrajectoryBatch
+from macro_rl.simulation.parallel import ParallelTrajectorySimulator
 from macro_rl.simulation.differentiable import DifferentiableSimulator
 from macro_rl.networks.actor_critic import ActorCritic
 
@@ -48,6 +49,9 @@ class ModelBasedActorCritic:
         n_trajectories: int = 100,
         lr: float = 3e-4,
         max_grad_norm: float = 0.5,
+        # Parallel simulation
+        use_parallel: bool = False,
+        n_workers: Optional[int] = None,
     ) -> None:
         self.dynamics = dynamics
         self.control_spec = control_spec
@@ -75,9 +79,14 @@ class ModelBasedActorCritic:
         self.optimizer = Adam(self.ac.parameters(), lr=lr)
 
         # Simulators
-        self.simulator = TrajectorySimulator(
-            dynamics, control_spec, reward_fn, dt, T
-        )
+        if use_parallel:
+            self.simulator = ParallelTrajectorySimulator(
+                dynamics, control_spec, reward_fn, dt, T, n_workers=n_workers
+            )
+        else:
+            self.simulator = TrajectorySimulator(
+                dynamics, control_spec, reward_fn, dt, T
+            )
         self.diff_simulator = DifferentiableSimulator(
             dynamics, control_spec, reward_fn, dt, T
         )

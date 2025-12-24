@@ -42,6 +42,10 @@ class TrainConfig:
     ckpt_freq: int = 5000
     ckpt_dir: str = "checkpoints/ghm_model1"
 
+    # Parallel simulation
+    use_parallel: bool = False
+    n_workers: Optional[int] = None
+
     # Misc
     seed: int = 123
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
