@@ -127,7 +127,10 @@ class TanhNormal(Distribution):
         """
         # Clamp actions away from boundaries for numerical stability
         # Use larger epsilon to prevent boundary issues
-        eps = torch.max(self.epsilon, 1e-4 * (self.high - self.low))
+        eps = torch.maximum(
+            torch.tensor(self.epsilon, device=action.device, dtype=action.dtype),
+            1e-4 * (self.high - self.low)
+        )
         action = torch.clamp(action, self.low + eps, self.high - eps)
 
         # Inverse transform: action -> z
