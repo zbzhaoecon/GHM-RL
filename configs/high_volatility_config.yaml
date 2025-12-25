@@ -56,7 +56,6 @@ training:
   max_grad_norm: 1.0  # Higher clipping for stability
   advantage_normalization: true
   entropy_weight: 0.1  # Higher exploration
-  action_reg_weight: 0.005
   use_baseline: true
 
 solver:

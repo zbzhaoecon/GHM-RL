@@ -102,7 +102,6 @@ class TrainingConfig:
     # Regularization
     advantage_normalization: bool = True
     entropy_weight: float = 0.05
-    action_reg_weight: float = 0.01
 
     # Baseline
     use_baseline: bool = True

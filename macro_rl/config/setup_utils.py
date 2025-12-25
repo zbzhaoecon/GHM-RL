@@ -150,7 +150,7 @@ def print_config_summary(config_manager: ConfigManager):
     print(f"  Trajectories: {config.training.n_trajectories}")
     print(f"  Horizon: T={config.training.T}, dt={config.training.dt}")
     print(f"  Learning rates: policy={config.training.lr_policy}, baseline={config.training.lr_baseline}")
-    print(f"  Regularization: entropy={config.training.entropy_weight}, action={config.training.action_reg_weight}")
+    print(f"  Regularization: entropy={config.training.entropy_weight}")
 
     print("\nNetwork:")
     if config.solver.solver_type == "actor_critic":
