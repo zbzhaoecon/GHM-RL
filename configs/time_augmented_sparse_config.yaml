@@ -117,7 +117,7 @@ solver:
 # ============================================================================
 reward:
   discount_rate: null    # Use r - mu
-  issuance_cost: 0.1     # Lambda for (1+λ)·a_E term
+  issuance_cost: 0.06    # p - 1 where p=1.06 is proportional issuance cost
   liquidation_rate: 0.0  # Set to 0 (equity holders get nothing)
   liquidation_flow: 0.0  # No liquidation value
 

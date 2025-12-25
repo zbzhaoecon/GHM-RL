@@ -366,8 +366,9 @@ class TrajectorySimulator:
             Trajectory returns (batch,)
 
         Formula for GHM model:
-            R = ∫_0^T e^(-ρt) (dL_t - (1+λ)dE_t) + e^(-ρT) V_terminal
-              = Σ_t e^(-ρt·dt) (a_L[t]·dt - (1+λ)·a_E[t]) · mask[t] + terminal
+            R = ∫_0^T e^(-ρt) (dL_t - (p-1)dE_t) + e^(-ρT) V_terminal
+              = Σ_t e^(-ρt·dt) (a_L[t]·dt - (p-1)·a_E[t]) · mask[t] + terminal
+            where p is the equity issuance cost parameter
         """
         batch_size, n_steps = actions.shape[0], actions.shape[1]
         device = actions.device
@@ -380,10 +381,11 @@ class TrajectorySimulator:
 
         # Compute discounted sum of net payouts directly from actions
         for t in range(n_steps):
-            # Net payout at time t: dividends - equity issuance cost
+            # Net payout at time t: dividends - equity dilution cost
+            # Cost of raising a_E is (p-1)*a_E where p is proportional cost parameter
             a_L = actions[:, t, 0]  # Dividend rate
             a_E = actions[:, t, 1]  # Equity issuance
-            net_payout = a_L * self.dt - (1.0 + self.reward_fn.issuance_cost) * a_E
+            net_payout = a_L * self.dt - self.reward_fn.issuance_cost * a_E
 
             # Add discounted net payout (only if trajectory was active)
             returns = returns + discounts[t] * net_payout * masks[:, t]
