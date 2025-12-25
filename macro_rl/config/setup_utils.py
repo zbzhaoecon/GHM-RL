@@ -124,7 +124,7 @@ def setup_from_config(
             ).to(device)
 
     # Setup simulator
-    use_sparse_rewards = config.training.get('use_sparse_rewards', False)
+    use_sparse_rewards = config.training.use_sparse_rewards
     simulator = TrajectorySimulator(
         dynamics=dynamics,
         control_spec=control_spec,
