@@ -96,7 +96,7 @@ training:
 
   # Optimization
   max_grad_norm: 1.0
-  advantage_normalization: true
+  advantage_normalization: false  # DISABLED: normalization destroys signal when all returns are small
   entropy_weight: 0.01
 
   # Baseline
