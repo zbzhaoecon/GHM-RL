@@ -1,0 +1,90 @@
+# Low Issuance Cost Scenario
+# Tests behavior when equity issuance is cheaper (promotes more aggressive financing)
+
+dynamics:
+  alpha: 0.18
+  mu: 0.01
+  r: 0.03
+  lambda_: 0.01  # REDUCED carry cost (baseline: 0.02)
+  sigma_A: 0.25
+  sigma_X: 0.12
+  rho: -0.2
+  c_max: 2.0
+
+  # REDUCED ISSUANCE COSTS
+  p: 1.02  # Proportional cost (baseline: 1.06)
+  phi: 0.0005  # Fixed cost (baseline: 0.002)
+
+  omega: 0.55
+
+action_space:
+  dividend_min: 0.0
+  dividend_max: 2.0
+  equity_min: 0.0
+
+  # HIGHER equity issuance allowed (cheaper costs encourage more issuance)
+  equity_max: 3.0  # baseline: 2.0
+
+  a_L_max: 10.0
+  a_E_max: 1.0  # baseline: 0.5
+  issuance_threshold: 0.02  # Lower threshold (baseline: 0.05)
+  issuance_cost: 0.0
+
+environment:
+  dt: 0.01
+  max_steps: 1000
+  seed: 789
+
+network:
+  policy_hidden: [64, 64]
+  value_hidden: [64, 64]
+  hidden_dims: [256, 256]
+  shared_layers: 0
+  policy_activation: tanh
+  value_activation: tanh
+  log_std_bounds: [-5.0, 2.0]
+  mean_output_clipping: [-10.0, 10.0]
+
+training:
+  dt: 0.01
+  T: 10.0
+  n_iterations: 10000
+  n_trajectories: 500
+
+  lr_policy: 0.0003
+  lr_baseline: 0.001
+  lr: 0.0003
+
+  max_grad_norm: 0.5
+  advantage_normalization: true
+  entropy_weight: 0.05
+  action_reg_weight: 0.01
+  use_baseline: true
+
+solver:
+  solver_type: monte_carlo
+  critic_loss: mc+hjb
+  actor_loss: pathwise
+  hjb_weight: 0.1
+  use_parallel: false
+  n_workers: null
+  batch_size: 1000
+
+reward:
+  discount_rate: null
+  issuance_cost: 0.0
+  liquidation_rate: 1.0
+  liquidation_flow: 0.0
+
+logging:
+  log_dir: runs/low_issuance_cost
+  log_freq: 100
+  eval_freq: 1000
+  ckpt_freq: 5000
+  ckpt_dir: checkpoints/low_issuance_cost
+
+misc:
+  seed: 789
+  device: cpu
+  resume: null
+  experiment_name: low_cost_issuance
