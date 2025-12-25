@@ -116,23 +116,72 @@ class GHMRewardFunction(RewardFunction):
         self,
         state: Tensor,
         terminated: Tensor,
+        value_function=None,
+        recapitalization_target: float = 0.5,
     ) -> Tensor:
         """
-        Compute terminal reward (liquidation value).
+        Compute terminal reward with optimal liquidation/recapitalization choice.
 
-        Formula:
-            r_T = ω·α/(r-μ) if terminated, else 0
+        Implements boundary condition (equation 5 from GHM):
+            F(0) = max{ max_c (F(c) - p(c+φ)), ωα/(r-μ) }
+
+        If value_function is provided, computes:
+            terminal_value = max{ liquidation_value,
+                                  V(c*,τ) - recapitalization_cost }
+
+        Otherwise, uses simple liquidation value.
 
         Args:
             state: Terminal states (batch, state_dim)
             terminated: Boolean mask (batch,)
+            value_function: Optional value network for continuation value
+            recapitalization_target: Target cash level c* for recapitalization
 
         Returns:
             Terminal rewards (batch,)
         """
         terminated_f = terminated.to(dtype=torch.float32, device=state.device)
-        value = torch.tensor(self.liquidation_value, dtype=torch.float32, device=state.device)
-        return terminated_f * value
+        liquidation_value = torch.tensor(self.liquidation_value, dtype=torch.float32, device=state.device)
+
+        if value_function is None or not terminated.any():
+            # Simple case: just use liquidation value
+            return terminated_f * liquidation_value
+
+        # Implement boundary condition: choose between liquidation and recapitalization
+        batch_size = state.shape[0]
+        terminal_values = torch.zeros(batch_size, dtype=torch.float32, device=state.device)
+
+        # Get indices of terminated trajectories
+        terminated_idx = terminated.nonzero(as_tuple=True)[0]
+
+        if len(terminated_idx) > 0:
+            # For terminated trajectories, compute continuation value at recapitalization target
+            # State is (c, τ) for time-augmented, or just (c) for standard
+            recapitalized_states = state[terminated_idx].clone()
+            recapitalized_states[:, 0] = recapitalization_target  # Set c to target level
+
+            with torch.no_grad():
+                # Get continuation value V(c*, τ)
+                continuation_values = value_function(recapitalized_states).squeeze()
+
+                # Compute recapitalization cost: p(c* + φ)
+                # Assuming we're starting from c ≈ 0, need to reach c*
+                from macro_rl.dynamics.ghm_equity import GHMEquityParams
+                params = GHMEquityParams()
+                recapitalization_cost = params.p * (recapitalization_target + params.phi)
+
+                # Recapitalization value = continuation value - cost
+                recapitalization_values = continuation_values - recapitalization_cost
+
+                # Choose max between liquidation and recapitalization
+                optimal_values = torch.max(
+                    liquidation_value.expand_as(recapitalization_values),
+                    recapitalization_values
+                )
+
+                terminal_values[terminated_idx] = optimal_values
+
+        return terminal_values
 
     def net_payout(
         self,

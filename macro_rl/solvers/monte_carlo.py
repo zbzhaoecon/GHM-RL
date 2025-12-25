@@ -157,7 +157,11 @@ class MonteCarloPolicyGradient(Solver):
         # 1. Sample initial states
         initial_states = self._sample_initial_states(self.n_trajectories)
 
-        # 2. Rollout trajectories
+        # 2. Update simulator with current baseline for boundary condition
+        if self.baseline is not None:
+            self.simulator.value_function = self.baseline
+
+        # 3. Rollout trajectories
         with torch.no_grad():
             trajectories = self.simulator.rollout(self.policy, initial_states)
 

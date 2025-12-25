@@ -127,6 +127,7 @@ class TrajectorySimulator:
         dt: float,
         T: float,
         integrator: Optional[object] = None,
+        value_function: Optional[object] = None,
     ):
         """
         Initialize trajectory simulator.
@@ -138,6 +139,7 @@ class TrajectorySimulator:
             dt: Time step size
             T: Time horizon
             integrator: SDE integrator (defaults to Euler-Maruyama)
+            value_function: Optional value function for boundary condition
         """
         import math
         from macro_rl.simulation.sde import SDEIntegrator
@@ -147,6 +149,7 @@ class TrajectorySimulator:
         self.reward_fn = reward_fn
         self.dt = float(dt)
         self.T = float(T)
+        self.value_function = value_function
 
         # Compute number of steps
         steps = self.T / self.dt
@@ -268,9 +271,13 @@ class TrajectorySimulator:
                         masks[:, t + 1:] = 0
                     break
 
-        # Compute terminal rewards
+        # Compute terminal rewards with optional boundary condition
         terminal_mask = (~active).to(dtype=rewards.dtype)
-        terminal_rewards = self.reward_fn.terminal_reward(states[:, -1, :], terminal_mask)
+        terminal_rewards = self.reward_fn.terminal_reward(
+            states[:, -1, :],
+            terminal_mask,
+            value_function=self.value_function
+        )
 
         # Compute discounted returns
         discount_rate = self.dynamics.discount_rate()
