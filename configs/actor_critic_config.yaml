@@ -56,7 +56,6 @@ training:
   max_grad_norm: 0.5
   advantage_normalization: true
   entropy_weight: 0.01  # Lower entropy for actor-critic
-  action_reg_weight: 0.0  # Not used in actor-critic
   use_baseline: true
 
 solver:
