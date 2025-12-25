@@ -367,8 +367,8 @@ def main():
     print(f"Starting training from step {start_step} to {config.training.n_iterations}")
     print("=" * 80)
 
-    # Store dynamics for state sampling (Monte Carlo)
-    if hasattr(solver, 'dynamics'):
+    # Store dynamics for state sampling (Monte Carlo solver needs this)
+    if config.solver.solver_type == "monte_carlo":
         solver.dynamics = dynamics
 
     best_return = -float('inf')
