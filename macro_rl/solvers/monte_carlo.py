@@ -59,7 +59,6 @@ class MonteCarloPolicyGradient(Solver):
         advantage_normalization: bool = True,
         max_grad_norm: float = 0.5,
         entropy_weight: float = 0.05,  # INCREASED from 0.01 to encourage exploration
-        action_reg_weight: float = 0.01,  # NEW: regularization to penalize zero actions (INCREASED)
     ):
         """
         Initialize Monte Carlo solver.
@@ -75,7 +74,6 @@ class MonteCarloPolicyGradient(Solver):
             advantage_normalization: Whether to normalize advantages
             max_grad_norm: Gradient clipping threshold
             entropy_weight: Entropy regularization weight (encourage exploration)
-            action_reg_weight: Action magnitude regularization weight
         """
         self.policy = policy
         self.simulator = simulator
@@ -85,7 +83,6 @@ class MonteCarloPolicyGradient(Solver):
         self.advantage_normalization = advantage_normalization
         self.max_grad_norm = max_grad_norm
         self.entropy_weight = entropy_weight
-        self.action_reg_weight = action_reg_weight
 
         # Optimizers
         self.policy_optimizer = Adam(policy.parameters(), lr=lr_policy)
@@ -197,18 +194,15 @@ class MonteCarloPolicyGradient(Solver):
         # 4b. Add entropy bonus (encourage exploration)
         entropy = self.policy.entropy(initial_states).mean()
 
-        # 4c. Add action magnitude regularization (penalize zero actions)
-        # This helps prevent the policy from collapsing to "do nothing"
-        action_magnitude = trajectories.actions.abs().mean()
-        action_reg_loss = -self.action_reg_weight * action_magnitude
-
         # Total loss combines all objectives
-        total_loss = policy_loss - self.entropy_weight * entropy + action_reg_loss
+        # REMOVED action regularization - it was pushing actions to boundaries!
+        # The negative sign made it MAXIMIZE action magnitude instead of preventing collapse
+        total_loss = policy_loss - self.entropy_weight * entropy
 
         # DIAGNOSTIC: Check for NaN/Inf in total loss
         if not torch.isfinite(total_loss):
             print(f"WARNING: Non-finite total loss detected: {total_loss.item()}")
-            print(f"  Policy loss: {policy_loss.item()}, Entropy: {entropy.item()}, Action reg: {action_reg_loss.item()}")
+            print(f"  Policy loss: {policy_loss.item()}, Entropy: {entropy.item()}")
             return self._get_safe_metrics(trajectories, initial_states, returns, advantages)
 
         # 5. Update policy
@@ -258,6 +252,9 @@ class MonteCarloPolicyGradient(Solver):
                 mean_actions = dist.mean  # (B, action_dim)
                 std_actions = dist.stddev  # (B, action_dim)
 
+            # Compute action magnitude for diagnostics only (not used in loss)
+            action_magnitude = trajectories.actions.abs().mean()
+
             metrics = {
                 # Returns
                 'return/mean': returns.mean().item(),
@@ -269,7 +266,6 @@ class MonteCarloPolicyGradient(Solver):
                 'loss/policy': policy_loss.item(),
                 'loss/total': total_loss.item(),
                 'loss/baseline': baseline_loss if isinstance(baseline_loss, float) else baseline_loss.item(),
-                'loss/action_reg': action_reg_loss.item(),
 
                 # Advantages
                 'advantage/mean': advantages.mean().item(),
@@ -453,7 +449,6 @@ class MonteCarloPolicyGradient(Solver):
                 'loss/policy': 0.0,  # Failed to compute
                 'loss/total': 0.0,
                 'loss/baseline': 0.0,
-                'loss/action_reg': 0.0,
                 'advantage/mean': advantages.mean().item() if torch.isfinite(advantages).all() else 0.0,
                 'advantage/std': advantages.std().item() if torch.isfinite(advantages).all() else 0.0,
                 'advantage/max': advantages.max().item() if torch.isfinite(advantages).all() else 0.0,
