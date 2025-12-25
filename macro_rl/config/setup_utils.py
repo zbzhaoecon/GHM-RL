@@ -4,9 +4,13 @@ import torch
 import numpy as np
 from typing import Tuple
 
-from macro_rl.dynamics import GHMEquityDynamics, GHMEquityParams
+from macro_rl.dynamics import (
+    GHMEquityDynamics,
+    GHMEquityTimeAugmentedDynamics,
+    GHMEquityParams,
+)
 from macro_rl.control.ghm_control import GHMControlSpec
-from macro_rl.rewards.ghm_rewards import GHMRewardFunction
+from macro_rl.rewards.ghm_rewards import GHMEquityReward
 from macro_rl.networks.policy import GaussianPolicy
 from macro_rl.networks.value import ValueNetwork
 from macro_rl.networks.actor_critic import ActorCritic
@@ -55,7 +59,14 @@ def setup_from_config(
         phi=config.dynamics.phi,
         omega=config.dynamics.omega,
     )
-    dynamics = GHMEquityDynamics(params)
+
+    # Choose dynamics type based on configuration
+    if config.training.use_time_augmented:
+        dynamics = GHMEquityTimeAugmentedDynamics(params, T=config.training.T)
+        print(f"Using time-augmented dynamics (2D state: c, τ)")
+    else:
+        dynamics = GHMEquityDynamics(params)
+        print(f"Using standard dynamics (1D state: c)")
 
     # Setup control specification
     # Note: GHMControlSpec uses a_L_max and a_E_max, not lower/upper directly
@@ -72,7 +83,7 @@ def setup_from_config(
     if discount_rate is None:
         discount_rate = params.r - params.mu
 
-    reward_fn = GHMRewardFunction(
+    reward_fn = GHMEquityReward(
         discount_rate=discount_rate,
         issuance_cost=config.reward.issuance_cost or params.lambda_,
         liquidation_rate=config.reward.liquidation_rate,
