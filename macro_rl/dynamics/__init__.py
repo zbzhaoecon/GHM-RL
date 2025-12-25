@@ -9,13 +9,14 @@ This module provides:
 """
 
 from .base import ContinuousTimeDynamics, StateSpace
-from .ghm_equity import GHMEquityDynamics, GHMEquityParams
+from .ghm_equity import GHMEquityDynamics, GHMEquityTimeAugmentedDynamics, GHMEquityParams
 from .test_models import GBMDynamics, OUDynamics
 
 __all__ = [
     "ContinuousTimeDynamics",
     "StateSpace",
     "GHMEquityDynamics",
+    "GHMEquityTimeAugmentedDynamics",
     "GHMEquityParams",
     "GBMDynamics",
     "OUDynamics",

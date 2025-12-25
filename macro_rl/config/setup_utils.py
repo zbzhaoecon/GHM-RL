@@ -10,7 +10,7 @@ from macro_rl.dynamics import (
     GHMEquityParams,
 )
 from macro_rl.control.ghm_control import GHMControlSpec
-from macro_rl.rewards.ghm_rewards import GHMEquityReward
+from macro_rl.rewards.ghm_rewards import GHMRewardFunction
 from macro_rl.networks.policy import GaussianPolicy
 from macro_rl.networks.value import ValueNetwork
 from macro_rl.networks.actor_critic import ActorCritic
@@ -83,7 +83,7 @@ def setup_from_config(
     if discount_rate is None:
         discount_rate = params.r - params.mu
 
-    reward_fn = GHMEquityReward(
+    reward_fn = GHMRewardFunction(
         discount_rate=discount_rate,
         issuance_cost=config.reward.issuance_cost or params.lambda_,
         liquidation_rate=config.reward.liquidation_rate,
