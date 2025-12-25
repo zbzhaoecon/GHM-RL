@@ -1,0 +1,91 @@
+# Actor-Critic Training Configuration
+# This configuration uses the model-based actor-critic solver with HJB regularization
+
+dynamics:
+  alpha: 0.18
+  mu: 0.01
+  r: 0.03
+  lambda_: 0.02
+  sigma_A: 0.25
+  sigma_X: 0.12
+  rho: -0.2
+  c_max: 2.0
+  p: 1.06
+  phi: 0.002
+  omega: 0.55
+
+action_space:
+  dividend_min: 0.0
+  dividend_max: 2.0
+  equity_min: 0.0
+  equity_max: 2.0
+  a_L_max: 10.0
+  a_E_max: 0.5
+  issuance_threshold: 0.05
+  issuance_cost: 0.0
+
+environment:
+  dt: 0.01
+  max_steps: 1000
+  seed: null
+
+network:
+  # Actor-Critic uses shared architecture
+  hidden_dims: [256, 256]
+  shared_layers: 1  # Share first layer between actor and critic
+
+  # These are not used for actor-critic but kept for compatibility
+  policy_hidden: [256, 256]
+  value_hidden: [256, 256]
+  policy_activation: tanh
+  value_activation: tanh
+  log_std_bounds: [-5.0, 2.0]
+  mean_output_clipping: [-10.0, 10.0]
+
+training:
+  dt: 0.01
+  T: 10.0
+  n_iterations: 15000
+  n_trajectories: 256  # Fewer trajectories for actor-critic (uses gradients)
+
+  # Actor-Critic uses combined learning rate
+  lr: 0.0003
+  lr_policy: 0.0003  # Not used, kept for compatibility
+  lr_baseline: 0.001  # Not used, kept for compatibility
+
+  max_grad_norm: 0.5
+  advantage_normalization: true
+  entropy_weight: 0.01  # Lower entropy for actor-critic
+  action_reg_weight: 0.0  # Not used in actor-critic
+  use_baseline: true
+
+solver:
+  solver_type: actor_critic
+
+  # Actor-Critic specific settings
+  critic_loss: mc+hjb  # Options: mc, td, mc+td, mc+hjb, td+hjb
+  actor_loss: pathwise  # Options: pathwise, reinforce
+  hjb_weight: 0.1  # Weight for HJB loss (model-based regularization)
+
+  use_parallel: false
+  n_workers: null
+  batch_size: 1000
+
+reward:
+  discount_rate: null
+  issuance_cost: 0.0
+  liquidation_rate: 1.0
+  liquidation_flow: 0.0
+
+logging:
+  log_dir: runs/actor_critic
+  log_freq: 100
+  eval_freq: 500
+  ckpt_freq: 5000
+  ckpt_dir: checkpoints/actor_critic
+
+misc:
+  seed: 123
+  device: cpu
+  resume: null
+  experiment_name: actor_critic_hjb

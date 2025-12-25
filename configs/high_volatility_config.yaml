@@ -1,0 +1,88 @@
+# High Volatility Scenario Configuration
+# Tests policy learning with increased market uncertainty
+
+dynamics:
+  alpha: 0.18
+  mu: 0.01
+  r: 0.03
+  lambda_: 0.02
+
+  # INCREASED VOLATILITY (2x baseline)
+  sigma_A: 0.50  # Permanent shock volatility (baseline: 0.25)
+  sigma_X: 0.24  # Transitory shock volatility (baseline: 0.12)
+  rho: -0.2
+
+  c_max: 2.0
+  p: 1.06
+  phi: 0.002
+  omega: 0.55
+
+action_space:
+  dividend_min: 0.0
+  dividend_max: 2.0
+  equity_min: 0.0
+  equity_max: 2.0
+  a_L_max: 10.0
+  a_E_max: 0.5
+  issuance_threshold: 0.05
+  issuance_cost: 0.0
+
+environment:
+  dt: 0.01
+  max_steps: 1000
+  seed: 456  # Different seed for reproducibility
+
+network:
+  # Larger network to handle more complex dynamics
+  policy_hidden: [128, 128, 64]
+  value_hidden: [128, 128, 64]
+  hidden_dims: [256, 256]
+  shared_layers: 0
+  policy_activation: tanh
+  value_activation: tanh
+  log_std_bounds: [-5.0, 2.0]
+  mean_output_clipping: [-10.0, 10.0]
+
+training:
+  dt: 0.01
+  T: 10.0
+  n_iterations: 15000
+  n_trajectories: 1000  # More trajectories for high variance
+
+  lr_policy: 0.0001  # Lower LR for stability
+  lr_baseline: 0.0005
+  lr: 0.0001
+
+  max_grad_norm: 1.0  # Higher clipping for stability
+  advantage_normalization: true
+  entropy_weight: 0.1  # Higher exploration
+  action_reg_weight: 0.005
+  use_baseline: true
+
+solver:
+  solver_type: monte_carlo
+  critic_loss: mc+hjb
+  actor_loss: pathwise
+  hjb_weight: 0.1
+  use_parallel: false
+  n_workers: null
+  batch_size: 1000
+
+reward:
+  discount_rate: null
+  issuance_cost: 0.0
+  liquidation_rate: 1.0
+  liquidation_flow: 0.0
+
+logging:
+  log_dir: runs/high_volatility
+  log_freq: 100
+  eval_freq: 500
+  ckpt_freq: 5000
+  ckpt_dir: checkpoints/high_volatility
+
+misc:
+  seed: 456
+  device: cpu
+  resume: null
+  experiment_name: high_volatility_2x
