@@ -89,6 +89,9 @@ class TrainingConfig:
     dt: float = 0.01
     T: float = 10.0
 
+    # Dynamics type
+    use_time_augmented: bool = False  # Use time-augmented dynamics (2D state: c, τ)
+
     # Training iterations
     n_iterations: int = 10000
     n_trajectories: int = 500
