@@ -91,6 +91,7 @@ class TrainingConfig:
 
     # Dynamics type
     use_time_augmented: bool = False  # Use time-augmented dynamics (2D state: c, τ)
+    use_sparse_rewards: bool = False  # Compute trajectory return directly (reduces variance)
 
     # Training iterations
     n_iterations: int = 10000
