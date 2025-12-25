@@ -58,9 +58,13 @@ def setup_from_config(
     dynamics = GHMEquityDynamics(params)
 
     # Setup control specification
+    # Note: GHMControlSpec uses a_L_max and a_E_max, not lower/upper directly
+    # The bounds are set via the parent class in __init__
     control_spec = GHMControlSpec(
-        lower=torch.tensor([config.action_space.dividend_min, config.action_space.equity_min]),
-        upper=torch.tensor([config.action_space.dividend_max, config.action_space.equity_max]),
+        a_L_max=config.action_space.dividend_max,
+        a_E_max=config.action_space.equity_max,
+        issuance_threshold=config.action_space.issuance_threshold,
+        issuance_cost=config.action_space.issuance_cost,
     )
 
     # Setup reward function
