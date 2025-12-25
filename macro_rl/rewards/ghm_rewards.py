@@ -109,8 +109,9 @@ class GHMRewardFunction(RewardFunction):
         """
         a_L = action[:, 0]
         a_E = action[:, 1]
-        # Dividend flow minus issuance cost
-        return a_L * dt - (1.0 + self.issuance_cost) * a_E
+        # Net payout: dividends minus equity dilution cost
+        # Cost of raising a_E is (p-1)*a_E where p is proportional cost parameter
+        return a_L * dt - self.issuance_cost * a_E
 
     def terminal_reward(
         self,
