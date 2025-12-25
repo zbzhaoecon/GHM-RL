@@ -374,20 +374,19 @@ class TrajectorySimulator:
 
         returns = torch.zeros(batch_size, device=device)
 
-        # Compute discounted sum of net payouts directly from actions
-        # This is mathematically equivalent to accumulating per-step rewards,
-        # but computed in one pass for the entire trajectory
-        for t in range(n_steps):
-            # Discount factor at time t
-            discount = torch.exp(torch.tensor(-discount_rate * t * self.dt, device=device))
+        # Precompute discount factors for efficiency
+        time_indices = torch.arange(n_steps, device=device, dtype=torch.float32)
+        discounts = torch.exp(-discount_rate * time_indices * self.dt)
 
+        # Compute discounted sum of net payouts directly from actions
+        for t in range(n_steps):
             # Net payout at time t: dividends - equity issuance cost
             a_L = actions[:, t, 0]  # Dividend rate
             a_E = actions[:, t, 1]  # Equity issuance
             net_payout = a_L * self.dt - (1.0 + self.reward_fn.issuance_cost) * a_E
 
             # Add discounted net payout (only if trajectory was active)
-            returns = returns + discount * net_payout * masks[:, t]
+            returns = returns + discounts[t] * net_payout * masks[:, t]
 
         # Add discounted terminal reward
         termination_times = masks.sum(dim=1)
