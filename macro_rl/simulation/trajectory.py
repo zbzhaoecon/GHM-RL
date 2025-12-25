@@ -244,6 +244,10 @@ class TrajectorySimulator:
                     noise[:, t, :]
                 )
 
+                # Set mask for current step (trajectory was active at START of step)
+                # This ensures the final reward before termination is counted
+                masks[:, t] = active.to(dtype=masks.dtype)
+
                 # Compute reward (step reward needs next_state for some reward functions)
                 rewards[:, t] = self.reward_fn.step_reward(
                     states[:, t, :],
@@ -255,14 +259,8 @@ class TrajectorySimulator:
                 # Check termination
                 terminated = self._check_termination(states[:, t + 1, :])
 
-                # Update active status FIRST (before setting mask)
+                # Update active status for NEXT step
                 active = active & (~terminated)
-
-                # Update active mask (now reflects termination)
-                masks[:, t] = active.to(dtype=masks.dtype)
-
-                # Zero out rewards for terminated trajectories
-                rewards[:, t] = rewards[:, t] * masks[:, t]
 
                 # Early exit if all terminated
                 if not active.any():
