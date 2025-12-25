@@ -87,7 +87,7 @@ training:
 
   # Training iterations
   n_iterations: 500     # Shorter test run
-  n_trajectories: 256   # Batch size
+  n_trajectories: 512   # Increased from 256 to compensate for higher variance without baseline
 
   # Learning rates
   lr_policy: 0.0003     # 3e-4
@@ -100,7 +100,7 @@ training:
   entropy_weight: 0.01
 
   # Baseline
-  use_baseline: true
+  use_baseline: false  # DISABLED: baseline converges too fast, killing gradient signal
 
 # ============================================================================
 # SOLVER
