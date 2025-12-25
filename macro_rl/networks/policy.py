@@ -43,10 +43,10 @@ class GaussianPolicy(nn.Module):
         layers.append(nn.Linear(prev, output_dim))
         self.mean_net = nn.Sequential(*layers)
 
-        # Better initialization: bias toward positive raw actions
-        # This prevents the policy from collapsing to zero actions
+        # Careful initialization: small weights, neutral bias
+        # Start near zero (middle of action space after tanh) to allow exploration in both directions
         nn.init.uniform_(self.mean_net[-1].weight, -0.01, 0.01)
-        nn.init.constant_(self.mean_net[-1].bias, 1.0)
+        nn.init.constant_(self.mean_net[-1].bias, 0.0)
 
         # Log std parameters (state-independent for now)
         self.log_std = nn.Parameter(torch.zeros(output_dim))
@@ -56,11 +56,11 @@ class GaussianPolicy(nn.Module):
     def _get_mean_log_std(self, state: Tensor) -> Tuple[Tensor, Tensor]:
         mean = self.mean_net(state)
 
-        # SAFETY: Clip raw network outputs to prevent extreme values that would
-        # saturate tanh and cause numerical issues in log probability computation
-        # For TanhNormal, raw outputs > 5 lead to tanh saturation and gradient issues
+        # SAFETY: Clip raw network outputs to prevent extreme values
+        # Relaxed from 5.0 to 10.0 to allow more expressive policy
+        # The z clipping in TanhNormal.log_prob provides additional safety
         if self.action_bounds is not None:
-            mean = torch.clamp(mean, -5.0, 5.0)
+            mean = torch.clamp(mean, -10.0, 10.0)
 
         log_std = self.log_std.clamp(*self.log_std_bounds)
         return mean, log_std

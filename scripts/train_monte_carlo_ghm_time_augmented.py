@@ -942,9 +942,10 @@ def main():
                 print(f"  ⚠️  WARNING: Policy may have collapsed! Action magnitude very low.")
 
             # DIAGNOSTIC: Check for extreme log probabilities (sign of boundary issues)
-            if 'diagnostics/log_prob_min' in metrics and metrics['diagnostics/log_prob_min'] < -50:
+            # Threshold relaxed from -50 to -80 after balancing numerical stability with learning
+            if 'diagnostics/log_prob_min' in metrics and metrics['diagnostics/log_prob_min'] < -80:
                 print(f"  ⚠️  WARNING: Extremely negative log probabilities detected!")
-                print(f"             Actions may be hitting boundaries.")
+                print(f"             Actions may be hitting boundaries (log_prob_min={metrics['diagnostics/log_prob_min']:.1f}).")
 
             # DIAGNOSTIC: Sample test policy to see what it's doing
             with torch.no_grad():
