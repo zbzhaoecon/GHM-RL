@@ -47,11 +47,9 @@ class GHMEquityParams:
 
     def __post_init__(self):
         """Compute derived parameters."""
-        # Liquidation value: ω·α/(r-μ)
-        if self.r > self.mu:
-            self.liquidation_value = self.omega * self.alpha / (self.r - self.mu)
-        else:
-            self.liquidation_value = 0.0
+        # Liquidation value: equity holders get nothing in bankruptcy
+        # When c ≤ 0, the firm is bankrupt and equity has zero value
+        self.liquidation_value = 0.0
 
 
 class GHMEquityDynamics(ContinuousTimeDynamics):

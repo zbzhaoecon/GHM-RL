@@ -255,14 +255,14 @@ class TrajectorySimulator:
                 # Check termination
                 terminated = self._check_termination(states[:, t + 1, :])
 
-                # Update active mask
+                # Update active status FIRST (before setting mask)
+                active = active & (~terminated)
+
+                # Update active mask (now reflects termination)
                 masks[:, t] = active.to(dtype=masks.dtype)
 
                 # Zero out rewards for terminated trajectories
                 rewards[:, t] = rewards[:, t] * masks[:, t]
-
-                # Update active status
-                active = active & (~terminated)
 
                 # Early exit if all terminated
                 if not active.any():
