@@ -40,12 +40,14 @@ from macro_rl.config.setup_utils import setup_from_config, print_config_summary
 from macro_rl.solvers.monte_carlo import MonteCarloPolicyGradient
 from macro_rl.solvers.actor_critic import ModelBasedActorCritic
 
-# Import utilities from existing training scripts
-from scripts.train_monte_carlo_ghm_model1 import (
-    PolicyAdapter,
-    compute_policy_value_for_visualization,
+# Import utilities from time-augmented training script and new modules
+from scripts.train_monte_carlo_ghm_time_augmented import PolicyAdapter
+from macro_rl.visualization import (
+    compute_policy_value_time_augmented,
+    compute_policy_value_standard,
     create_training_visualization,
 )
+from macro_rl.evaluation import evaluate_policy as evaluate_policy_unified
 
 
 def parse_args():
@@ -218,8 +220,14 @@ def log_visualizations(writer: SummaryWriter, solver, dynamics, step: int, confi
         policy = solver.ac  # ActorCritic has same interface
         baseline = solver.ac
 
-    # Compute visualizations
-    results = compute_policy_value_for_visualization(policy, baseline, dynamics, n_points=100)
+    # Compute visualizations (automatically detects time-augmented vs standard)
+    if dynamics.state_space.dim == 2:
+        # Time-augmented dynamics
+        results = compute_policy_value_time_augmented(policy, baseline, dynamics, n_points=100)
+    else:
+        # Standard dynamics
+        results = compute_policy_value_standard(policy, baseline, dynamics, n_points=100)
+
     fig = create_training_visualization(results, step)
 
     # Log to TensorBoard
@@ -235,51 +243,18 @@ def log_visualizations(writer: SummaryWriter, solver, dynamics, step: int, confi
     print(f"  Saved visualization to {viz_path}")
 
 
-def evaluate_policy(solver, config_manager: ConfigManager, n_episodes: int = 50) -> dict:
-    """Evaluate policy deterministically."""
+def evaluate_policy_local(solver, config_manager: ConfigManager, dynamics, n_episodes: int = 50) -> dict:
+    """Evaluate policy deterministically using unified evaluation module."""
     config = config_manager.config
 
-    if config.solver.solver_type == "monte_carlo":
-        # Use Monte Carlo evaluation
-        solver.policy.eval()
-        initial_states = solver._sample_initial_states(n_episodes)
-
-        class DeterministicPolicy:
-            def __init__(self, policy):
-                self.policy = policy.policy if hasattr(policy, 'policy') else policy
-
-            def act(self, state):
-                action, _ = self.policy.sample(state, deterministic=True)
-                return action
-
-        with torch.no_grad():
-            det_policy = DeterministicPolicy(solver.policy)
-            trajectories = solver.simulator.rollout(det_policy, initial_states)
-
-        solver.policy.train()
-
-        return {
-            'return_mean': trajectories.returns.mean().item(),
-            'return_std': trajectories.returns.std().item(),
-            'episode_length': trajectories.masks.sum(dim=-1).mean().item(),
-        }
-
-    elif config.solver.solver_type == "actor_critic":
-        # Use Actor-Critic evaluation
-        solver.ac.eval()
-
-        with torch.no_grad():
-            # Sample initial states
-            c_values = torch.rand(n_episodes, 1) * solver.dynamics.state_space.upper[0]
-            trajectories = solver.simulator.rollout(solver.ac, c_values)
-
-        solver.ac.train()
-
-        return {
-            'return_mean': trajectories.returns.mean().item(),
-            'return_std': trajectories.returns.std().item(),
-            'episode_length': trajectories.masks.sum(dim=-1).mean().item(),
-        }
+    # Use the unified evaluation function from macro_rl.evaluation
+    return evaluate_policy_unified(
+        solver=solver,
+        solver_type=config.solver.solver_type,
+        dynamics=dynamics,
+        n_episodes=n_episodes,
+        deterministic=True,
+    )
 
 
 def main():
@@ -395,7 +370,7 @@ def main():
         # Evaluation
         if step % config.logging.eval_freq == 0:
             print(f"\n[Evaluation at step {step}]")
-            eval_metrics = evaluate_policy(solver, config_manager, n_episodes=50)
+            eval_metrics = evaluate_policy_local(solver, config_manager, dynamics, n_episodes=50)
 
             writer.add_scalar("eval/return_mean", eval_metrics['return_mean'], step)
             writer.add_scalar("eval/return_std", eval_metrics['return_std'], step)
@@ -425,7 +400,7 @@ def main():
 
     # Final evaluation
     print("\nFinal evaluation...")
-    final_eval = evaluate_policy(solver, config_manager, n_episodes=100)
+    final_eval = evaluate_policy_local(solver, config_manager, dynamics, n_episodes=100)
     print(f"  Final Return: {final_eval['return_mean']:.4f} ± {final_eval['return_std']:.4f}")
     print(f"  Best Return: {best_return:.4f}")
 
