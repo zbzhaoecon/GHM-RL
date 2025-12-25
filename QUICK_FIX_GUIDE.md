@@ -9,7 +9,7 @@ Your agent learns to bankrupt itself because of **3 critical bugs** that make ba
 ## Fix #1: Reward Masking at Termination (CRITICAL - DO THIS FIRST!)
 
 ### The Problem
-When bankruptcy happens, the reward is NOT zeroed out, so the agent gets BOTH the dividend payout AND liquidation value.
+When bankruptcy happens (from stochastic shocks pushing c ≤ 0), the reward at that step is NOT zeroed out. The agent gets BOTH the dividend reward AND liquidation value.
 
 ### The Fix
 
@@ -54,6 +54,8 @@ rewards[:, t] = rewards[:, t] * masks[:, t]  # ✅ Reward properly zeroed!
 The mask should indicate whether the trajectory is active AT THE END of step t (after taking action and transitioning), not at the BEGINNING.
 
 By updating `active` before setting the mask, terminated trajectories will have `mask=0`, properly zeroing their rewards.
+
+**Note:** Constraints prevent c from going negative due to dividends alone (a_L ≤ c/dt is enforced). However, stochastic shocks in the dynamics can still push c ≤ 0, triggering bankruptcy. When this happens, the reward must be zeroed.
 
 ---
 
@@ -101,9 +103,9 @@ In real bankruptcies:
 - Assets sold at fire-sale prices
 - Legal costs and fees
 - Debt holders paid first
-- **Equity holders get little or nothing**
+- **Equity holders get nothing**
 
-Setting liquidation value to 0 or a small positive removes the incentive to bankrupt.
+Setting liquidation value to 0 removes any reward for bankruptcy. This is economically correct: when a firm goes bankrupt (c ≤ 0), equity holders receive zero value.
 
 ---
 
