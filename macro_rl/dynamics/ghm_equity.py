@@ -123,8 +123,14 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
             a_L = action[:, 0:1]  # Dividend payout rate (dL/A)
             a_E = action[:, 1:2]  # Gross equity issuance rate (dE/A)
 
+            # Fixed cost: only paid when issuing equity (𝟙(a_E > 0) · φ)
+            # Use small threshold to avoid numerical issues
+            is_issuing = (a_E > 1e-6).to(dtype=a_E.dtype)
+            fixed_cost = self.p.phi * is_issuing
+
             # Per equation (3): + dE/(pA) - dL/A - dΦ/A
-            drift = drift - a_L + a_E / self.p.p - self.p.phi
+            # where dΦ = φ·A·𝟙(dE > 0), so dΦ/A = φ·𝟙(a_E > 0)
+            drift = drift - a_L + a_E / self.p.p - fixed_cost
 
         return drift
 
@@ -265,11 +271,16 @@ class GHMEquityTimeAugmentedDynamics(ContinuousTimeDynamics):
             a_L = action[:, 0:1]  # Dividend payout rate (dL/A)
             a_E = action[:, 1:2]  # Gross equity issuance rate (dE/A)
 
+            # Fixed cost: only paid when issuing equity (𝟙(a_E > 0) · φ)
+            # Use small threshold to avoid numerical issues
+            is_issuing = (a_E > 1e-6).to(dtype=a_E.dtype)
+            fixed_cost = self.p.phi * is_issuing
+
             # Correct implementation per equation (3):
             # + dE/(pA): net cash from gross equity issuance (divided by p)
             # - dL/A: dividends paid out
-            # - dΦ/A: fixed cost of financing
-            drift_c = drift_c - a_L + a_E / self.p.p - self.p.phi
+            # - dΦ/A: fixed cost of financing (only when issuing)
+            drift_c = drift_c - a_L + a_E / self.p.p - fixed_cost
 
         # Time drift: -1 (time decreases)
         drift_tau = -torch.ones(batch_size, 1, device=x.device, dtype=x.dtype)
