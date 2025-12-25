@@ -91,7 +91,7 @@ training:
 
   # Learning rates
   lr_policy: 0.0003     # 3e-4
-  lr_baseline: 0.001    # 1e-3
+  lr_baseline: 0.0001   # 1e-4 (FIXED: 3x slower than policy to prevent baseline overfitting)
   lr: 0.0003            # For actor-critic
 
   # Optimization

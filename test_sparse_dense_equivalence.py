@@ -41,7 +41,7 @@ def test_sparse_dense_equivalence():
     for t in range(n_steps):
         a_L = actions[:, t, 0]
         a_E = actions[:, t, 1]
-        rewards[:, t] = a_L * dt - (1.0 + issuance_cost) * a_E
+        rewards[:, t] = a_L * dt - issuance_cost * a_E
 
     returns_dense = torch.zeros(batch_size)
     for t in range(n_steps):
@@ -58,7 +58,7 @@ def test_sparse_dense_equivalence():
         discount = torch.exp(torch.tensor(-discount_rate * t * dt))
         a_L = actions[:, t, 0]
         a_E = actions[:, t, 1]
-        net_payout = a_L * dt - (1.0 + issuance_cost) * a_E
+        net_payout = a_L * dt - issuance_cost * a_E
         returns_sparse = returns_sparse + discount * net_payout * masks[:, t]
 
     terminal_discount = torch.exp(-discount_rate * termination_times * dt)
