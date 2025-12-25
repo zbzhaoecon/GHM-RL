@@ -117,7 +117,7 @@ solver:
 # ============================================================================
 reward:
   discount_rate: null    # Use r - mu
-  issuance_cost: 0.5     # INCREASED from 0.06 to make equity issuance costly (force learning)
+  issuance_cost: 0.06    # p - 1 = 1.06 - 1 (proportional cost, approximates (p-1)/p for p≈1)
   liquidation_rate: 0.0  # Set to 0 (equity holders get nothing)
   liquidation_flow: 0.0  # No liquidation value
 

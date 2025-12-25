@@ -104,7 +104,7 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
         """
         Drift with optional action influence for model-based training.
 
-        For model-based training: μ_c(c, a) = α + c(r - λ - μ) - a_L + a_E
+        From equation (3): μ_c(c, a) = α + c(r - λ - μ) - a_L + a_E/p - φ
         For Gym environment: action is ignored (impulse controls)
 
         Args:
@@ -120,9 +120,11 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
 
         # Add control effects if actions provided (for model-based training)
         if action is not None and action.shape[-1] == 2:
-            a_L = action[:, 0:1]  # Dividend payout (outflow)
-            a_E = action[:, 1:2]  # Equity issuance (inflow)
-            drift = drift - a_L + a_E
+            a_L = action[:, 0:1]  # Dividend payout rate (dL/A)
+            a_E = action[:, 1:2]  # Gross equity issuance rate (dE/A)
+
+            # Per equation (3): + dE/(pA) - dL/A - dΦ/A
+            drift = drift - a_L + a_E / self.p.p - self.p.phi
 
         return drift
 
@@ -254,14 +256,20 @@ class GHMEquityTimeAugmentedDynamics(ContinuousTimeDynamics):
         batch_size = x.shape[0]
         c = x[:, 0:1]  # Cash component
 
-        # Cash drift: α + c(r - λ - μ) - a_L + a_E
+        # Cash drift: α + c(r - λ - μ) - a_L + a_E/p - φ
+        # From equation (3): dC_t = (α+C_t(r−λ−μ))dt + ... + dE_t/(pA_t) − dΦ_t/A_t − dL_t/A_t
         drift_c = self._drift_const + c * self._drift_slope
 
         # Add control effects if actions provided
         if action is not None and action.shape[-1] == 2:
-            a_L = action[:, 0:1]  # Dividend payout
-            a_E = action[:, 1:2]  # Equity issuance
-            drift_c = drift_c - a_L + a_E
+            a_L = action[:, 0:1]  # Dividend payout rate (dL/A)
+            a_E = action[:, 1:2]  # Gross equity issuance rate (dE/A)
+
+            # Correct implementation per equation (3):
+            # + dE/(pA): net cash from gross equity issuance (divided by p)
+            # - dL/A: dividends paid out
+            # - dΦ/A: fixed cost of financing
+            drift_c = drift_c - a_L + a_E / self.p.p - self.p.phi
 
         # Time drift: -1 (time decreases)
         drift_tau = -torch.ones(batch_size, 1, device=x.device, dtype=x.dtype)
