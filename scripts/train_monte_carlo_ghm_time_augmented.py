@@ -111,6 +111,9 @@ class TrainConfig:
     value_hidden: tuple = (64, 64)
     use_baseline: bool = True
 
+    # Economic parameters
+    liquidation_flow: float = 0.0  # Post-liquidation cash flow (0 = no recovery)
+
     # Logging and checkpoints
     log_dir: str = "runs/monte_carlo_time_aug"
     log_freq: int = 100
@@ -149,6 +152,10 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--value_hidden", type=int, nargs="+", default=[64, 64],
                        help="Value hidden layer dimensions")
 
+    # Economic parameters
+    parser.add_argument("--liquidation_flow", type=float, default=0.0,
+                       help="Post-liquidation cash flow (alpha). Default 0.0 makes bankruptcy very costly.")
+
     # Logging and checkpoints
     parser.add_argument("--log_dir", type=str, default="runs/monte_carlo_model1", help="TensorBoard log directory")
     parser.add_argument("--log_freq", type=int, default=100, help="Logging frequency (iterations)")
@@ -178,6 +185,7 @@ def parse_args() -> TrainConfig:
         policy_hidden=tuple(args.policy_hidden),
         value_hidden=tuple(args.value_hidden),
         use_baseline=not args.no_baseline,
+        liquidation_flow=args.liquidation_flow,
         log_dir=args.log_dir,
         log_freq=args.log_freq,
         eval_freq=args.eval_freq,
@@ -787,10 +795,13 @@ def main():
         discount_rate=params.r - params.mu,
         issuance_cost=params.lambda_,  # FIXED: Use lambda_ instead of p-1
         liquidation_rate=params.omega,
-        liquidation_flow=params.alpha,
+        liquidation_flow=config.liquidation_flow,  # FIXED: Use configurable parameter
     )
     print(f"  Discount rate: {params.r - params.mu:.4f}")
     print(f"  Issuance cost: {params.lambda_:.4f}")
+    print(f"  Liquidation flow: {config.liquidation_flow:.4f}")
+    liquidation_value = params.omega * config.liquidation_flow / (params.r - params.mu) if (params.r - params.mu) > 0 else 0.0
+    print(f"  Liquidation value (ω·α/(r-μ)): {liquidation_value:.4f}")
 
     # =========================================================================
     # 4. Setup policy and baseline networks
