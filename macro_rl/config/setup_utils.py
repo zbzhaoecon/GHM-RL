@@ -124,13 +124,20 @@ def setup_from_config(
             ).to(device)
 
     # Setup simulator
+    use_sparse_rewards = config.training.get('use_sparse_rewards', False)
     simulator = TrajectorySimulator(
         dynamics=dynamics,
         control_spec=control_spec,
         reward_fn=reward_fn,
         dt=config.training.dt,
         T=config.training.T,
+        use_sparse_rewards=use_sparse_rewards,
     )
+
+    if use_sparse_rewards:
+        print("Using SPARSE rewards (trajectory-level returns)")
+    else:
+        print("Using DENSE rewards (per-step rewards)")
 
     return dynamics, control_spec, reward_fn, policy, baseline, simulator, device
 

@@ -1,0 +1,141 @@
+# Time-Augmented GHM Equity Training Configuration WITH SPARSE REWARDS
+# This config trains a policy π(c, τ) using sparse (trajectory-level) rewards
+# to reduce gradient variance and improve stability
+
+# ============================================================================
+# DYNAMICS PARAMETERS
+# ============================================================================
+dynamics:
+  # Cash flow parameters
+  alpha: 0.18           # Mean cash flow rate
+
+  # Growth and rates
+  mu: 0.01              # Growth rate
+  r: 0.03               # Interest rate
+  lambda_: 0.02         # Carry cost
+
+  # Volatility parameters
+  sigma_A: 0.25         # Permanent shock volatility
+  sigma_X: 0.12         # Transitory shock volatility
+  rho: -0.2             # Correlation between shocks
+
+  # State bounds
+  c_max: 2.0            # Maximum cash reserves
+
+  # Equity issuance costs
+  p: 1.06               # Proportional cost
+  phi: 0.002            # Fixed cost
+
+  # Liquidation
+  omega: 0.55           # Recovery rate
+
+# ============================================================================
+# ACTION SPACE
+# ============================================================================
+action_space:
+  # Dividend bounds
+  dividend_min: 0.0
+  dividend_max: 10.0
+
+  # Equity issuance bounds
+  equity_min: 0.0
+  equity_max: 0.5
+
+  # Control spec parameters
+  a_L_max: 10.0
+  a_E_max: 0.5
+  issuance_threshold: 0.05
+  issuance_cost: 0.0
+
+# ============================================================================
+# ENVIRONMENT
+# ============================================================================
+environment:
+  dt: 0.1               # Time step
+  max_steps: 100        # Max steps (T / dt = 10.0 / 0.1 = 100)
+  seed: null
+
+# ============================================================================
+# NETWORK ARCHITECTURE
+# ============================================================================
+network:
+  # Policy network (for Monte Carlo)
+  policy_hidden: [256, 256, 128]
+  policy_activation: relu
+
+  # Value network (baseline)
+  value_hidden: [256, 256, 128]
+  value_activation: relu
+
+  # Policy parameters
+  log_std_bounds: [-2.0, 0.5]
+  mean_output_clipping: [-10.0, 10.0]
+
+# ============================================================================
+# TRAINING
+# ============================================================================
+training:
+  # Time horizon
+  dt: 0.1               # Time step
+  T: 10.0               # Total horizon
+
+  # TIME-AUGMENTED DYNAMICS (KEY FLAG!)
+  use_time_augmented: true  # Enable 2D state (c, τ)
+
+  # SPARSE REWARDS (KEY FLAG!)
+  use_sparse_rewards: true  # Compute trajectory return directly (reduces variance)
+
+  # Training iterations
+  n_iterations: 500     # Shorter test run
+  n_trajectories: 256   # Batch size
+
+  # Learning rates
+  lr_policy: 0.0003     # 3e-4
+  lr_baseline: 0.001    # 1e-3
+  lr: 0.0003            # For actor-critic
+
+  # Optimization
+  max_grad_norm: 1.0
+  advantage_normalization: true
+  entropy_weight: 0.01
+
+  # Baseline
+  use_baseline: true
+
+# ============================================================================
+# SOLVER
+# ============================================================================
+solver:
+  # Solver type
+  solver_type: monte_carlo
+
+  # Monte Carlo
+  batch_size: 1000
+
+# ============================================================================
+# REWARD FUNCTION
+# ============================================================================
+reward:
+  discount_rate: null    # Use r - mu
+  issuance_cost: 0.1     # Lambda for (1+λ)·a_E term
+  liquidation_rate: 0.0  # Set to 0 (equity holders get nothing)
+  liquidation_flow: 0.0  # No liquidation value
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+logging:
+  log_dir: logs/ghm_time_augmented_sparse
+  log_freq: 50
+  eval_freq: 50
+  ckpt_freq: 1000
+  ckpt_dir: checkpoints/ghm_time_augmented_sparse
+
+# ============================================================================
+# MISC
+# ============================================================================
+misc:
+  seed: 42
+  device: cpu           # Change to "cuda" if GPU available
+  resume: null
+  experiment_name: sparse_rewards_test
