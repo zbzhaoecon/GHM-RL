@@ -128,6 +128,7 @@ class TrajectorySimulator:
         T: float,
         integrator: Optional[object] = None,
         value_function: Optional[object] = None,
+        use_sparse_rewards: bool = False,
     ):
         """
         Initialize trajectory simulator.
@@ -140,6 +141,8 @@ class TrajectorySimulator:
             T: Time horizon
             integrator: SDE integrator (defaults to Euler-Maruyama)
             value_function: Optional value function for boundary condition
+            use_sparse_rewards: If True, compute trajectory return directly instead
+                of accumulating per-step rewards (reduces gradient variance)
         """
         import math
         from macro_rl.simulation.sde import SDEIntegrator
@@ -150,6 +153,7 @@ class TrajectorySimulator:
         self.dt = float(dt)
         self.T = float(T)
         self.value_function = value_function
+        self.use_sparse_rewards = use_sparse_rewards
 
         # Compute number of steps
         steps = self.T / self.dt
@@ -279,7 +283,10 @@ class TrajectorySimulator:
 
         # Compute discounted returns
         discount_rate = self.dynamics.discount_rate()
-        returns = self._compute_returns(rewards, terminal_rewards, masks, discount_rate)
+        if self.use_sparse_rewards:
+            returns = self._compute_sparse_returns(states, actions, terminal_rewards, masks, discount_rate)
+        else:
+            returns = self._compute_returns(rewards, terminal_rewards, masks, discount_rate)
 
         return TrajectoryBatch(
             states=states,
@@ -328,6 +335,62 @@ class TrajectorySimulator:
         termination_times = masks.sum(dim=1)  # (batch,)
 
         # Discount terminal reward at actual termination time (not always at T)
+        terminal_discount = torch.exp(-discount_rate * termination_times * self.dt)
+        returns = returns + terminal_discount * terminal_rewards
+
+        return returns
+
+    def _compute_sparse_returns(
+        self,
+        states: Tensor,
+        actions: Tensor,
+        terminal_rewards: Tensor,
+        masks: Tensor,
+        discount_rate: float,
+    ) -> Tensor:
+        """
+        Compute trajectory returns using sparse rewards.
+
+        Instead of accumulating per-step rewards, directly compute the total
+        discounted payout for each trajectory. This reduces gradient variance
+        and simplifies the credit assignment problem.
+
+        Args:
+            states: State trajectories (batch, n_steps+1, state_dim)
+            actions: Action trajectories (batch, n_steps, action_dim)
+            terminal_rewards: Terminal rewards (batch,)
+            masks: Active masks (batch, n_steps)
+            discount_rate: Continuous-time discount rate ρ
+
+        Returns:
+            Trajectory returns (batch,)
+
+        Formula for GHM model:
+            R = ∫_0^T e^(-ρt) (dL_t - (1+λ)dE_t) + e^(-ρT) V_terminal
+              = Σ_t e^(-ρt·dt) (a_L[t]·dt - (1+λ)·a_E[t]) · mask[t] + terminal
+        """
+        batch_size, n_steps = actions.shape[0], actions.shape[1]
+        device = actions.device
+
+        returns = torch.zeros(batch_size, device=device)
+
+        # Compute discounted sum of net payouts directly from actions
+        # This is mathematically equivalent to accumulating per-step rewards,
+        # but computed in one pass for the entire trajectory
+        for t in range(n_steps):
+            # Discount factor at time t
+            discount = torch.exp(torch.tensor(-discount_rate * t * self.dt, device=device))
+
+            # Net payout at time t: dividends - equity issuance cost
+            a_L = actions[:, t, 0]  # Dividend rate
+            a_E = actions[:, t, 1]  # Equity issuance
+            net_payout = a_L * self.dt - (1.0 + self.reward_fn.issuance_cost) * a_E
+
+            # Add discounted net payout (only if trajectory was active)
+            returns = returns + discount * net_payout * masks[:, t]
+
+        # Add discounted terminal reward
+        termination_times = masks.sum(dim=1)
         terminal_discount = torch.exp(-discount_rate * termination_times * self.dt)
         returns = returns + terminal_discount * terminal_rewards
 
