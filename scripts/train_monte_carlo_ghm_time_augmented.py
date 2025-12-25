@@ -694,6 +694,20 @@ def log_training_metrics(
     if "grad_norm/baseline" in metrics:
         writer.add_scalar("grad_norm/baseline", metrics["grad_norm/baseline"], step)
 
+    # Diagnostics (for detecting issues early)
+    if "diagnostics/action_min" in metrics:
+        writer.add_scalar("diagnostics/action_min", metrics["diagnostics/action_min"], step)
+    if "diagnostics/action_max" in metrics:
+        writer.add_scalar("diagnostics/action_max", metrics["diagnostics/action_max"], step)
+    if "diagnostics/action_mean" in metrics:
+        writer.add_scalar("diagnostics/action_mean", metrics["diagnostics/action_mean"], step)
+    if "diagnostics/log_prob_mean" in metrics:
+        writer.add_scalar("diagnostics/log_prob_mean", metrics["diagnostics/log_prob_mean"], step)
+    if "diagnostics/log_prob_min" in metrics:
+        writer.add_scalar("diagnostics/log_prob_min", metrics["diagnostics/log_prob_min"], step)
+    if "diagnostics/log_prob_max" in metrics:
+        writer.add_scalar("diagnostics/log_prob_max", metrics["diagnostics/log_prob_max"], step)
+
 
 def evaluate_policy(
     solver: MonteCarloPolicyGradient,
@@ -917,9 +931,20 @@ def main():
             print(f"  Entropy: {metrics['policy/entropy']:6.4f}")
             print(f"  Action Magnitude: {metrics['policy/action_magnitude']:6.4f}")
 
+            # DIAGNOSTIC: Display new diagnostic metrics
+            if 'diagnostics/log_prob_mean' in metrics:
+                print(f"  Log Prob: mean={metrics['diagnostics/log_prob_mean']:7.3f}, "
+                      f"min={metrics['diagnostics/log_prob_min']:7.3f}, "
+                      f"max={metrics['diagnostics/log_prob_max']:7.3f}")
+
             # DIAGNOSTIC: Check if policy has collapsed to zero
             if metrics['policy/action_magnitude'] < 0.01:
                 print(f"  ⚠️  WARNING: Policy may have collapsed! Action magnitude very low.")
+
+            # DIAGNOSTIC: Check for extreme log probabilities (sign of boundary issues)
+            if 'diagnostics/log_prob_min' in metrics and metrics['diagnostics/log_prob_min'] < -50:
+                print(f"  ⚠️  WARNING: Extremely negative log probabilities detected!")
+                print(f"             Actions may be hitting boundaries.")
 
             # DIAGNOSTIC: Sample test policy to see what it's doing
             with torch.no_grad():
