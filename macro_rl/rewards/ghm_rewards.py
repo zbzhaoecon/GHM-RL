@@ -109,8 +109,14 @@ class GHMRewardFunction(RewardFunction):
         """
         a_L = action[:, 0]
         a_E = action[:, 1]
-        # Net payout: dividends minus equity dilution cost
-        # Cost of raising a_E is (p-1)*a_E where p is proportional cost parameter
+        # Net payout to existing shareholders: dividends minus equity dilution cost
+        # If a_E is GROSS equity issued, then:
+        # - Firm receives: a_E/p in cash
+        # - New shareholders get: a_E in equity
+        # - Net cost to existing shareholders: a_E - a_E/p = a_E(p-1)/p
+        # Where issuance_cost = (p-1), so cost = issuance_cost * a_E / p
+        # Note: For p=1.06, this is 0.06/1.06 ≈ 0.0566, not 0.06
+        # But we use the approximation (p-1)*a_E ≈ (p-1)/p * a_E for p ≈ 1
         return a_L * dt - self.issuance_cost * a_E
 
     def terminal_reward(

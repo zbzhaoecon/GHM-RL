@@ -104,7 +104,7 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
         """
         Drift with optional action influence for model-based training.
 
-        For model-based training: μ_c(c, a) = α + c(r - λ - μ) - a_L + a_E
+        From equation (3): μ_c(c, a) = α + c(r - λ - μ) - a_L + a_E/p - φ
         For Gym environment: action is ignored (impulse controls)
 
         Args:
@@ -120,9 +120,17 @@ class GHMEquityDynamics(ContinuousTimeDynamics):
 
         # Add control effects if actions provided (for model-based training)
         if action is not None and action.shape[-1] == 2:
-            a_L = action[:, 0:1]  # Dividend payout (outflow)
-            a_E = action[:, 1:2]  # Equity issuance (inflow)
-            drift = drift - a_L + a_E
+            a_L = action[:, 0:1]  # Dividend payout rate (dL/A)
+            a_E = action[:, 1:2]  # Gross equity issuance rate (dE/A)
+
+            # Fixed cost: only paid when issuing equity (𝟙(a_E > 0) · φ)
+            # Use small threshold to avoid numerical issues
+            is_issuing = (a_E > 1e-6).to(dtype=a_E.dtype)
+            fixed_cost = self.p.phi * is_issuing
+
+            # Per equation (3): + dE/(pA) - dL/A - dΦ/A
+            # where dΦ = φ·A·𝟙(dE > 0), so dΦ/A = φ·𝟙(a_E > 0)
+            drift = drift - a_L + a_E / self.p.p - fixed_cost
 
         return drift
 
@@ -254,14 +262,25 @@ class GHMEquityTimeAugmentedDynamics(ContinuousTimeDynamics):
         batch_size = x.shape[0]
         c = x[:, 0:1]  # Cash component
 
-        # Cash drift: α + c(r - λ - μ) - a_L + a_E
+        # Cash drift: α + c(r - λ - μ) - a_L + a_E/p - φ
+        # From equation (3): dC_t = (α+C_t(r−λ−μ))dt + ... + dE_t/(pA_t) − dΦ_t/A_t − dL_t/A_t
         drift_c = self._drift_const + c * self._drift_slope
 
         # Add control effects if actions provided
         if action is not None and action.shape[-1] == 2:
-            a_L = action[:, 0:1]  # Dividend payout
-            a_E = action[:, 1:2]  # Equity issuance
-            drift_c = drift_c - a_L + a_E
+            a_L = action[:, 0:1]  # Dividend payout rate (dL/A)
+            a_E = action[:, 1:2]  # Gross equity issuance rate (dE/A)
+
+            # Fixed cost: only paid when issuing equity (𝟙(a_E > 0) · φ)
+            # Use small threshold to avoid numerical issues
+            is_issuing = (a_E > 1e-6).to(dtype=a_E.dtype)
+            fixed_cost = self.p.phi * is_issuing
+
+            # Correct implementation per equation (3):
+            # + dE/(pA): net cash from gross equity issuance (divided by p)
+            # - dL/A: dividends paid out
+            # - dΦ/A: fixed cost of financing (only when issuing)
+            drift_c = drift_c - a_L + a_E / self.p.p - fixed_cost
 
         # Time drift: -1 (time decreases)
         drift_tau = -torch.ones(batch_size, 1, device=x.device, dtype=x.dtype)
