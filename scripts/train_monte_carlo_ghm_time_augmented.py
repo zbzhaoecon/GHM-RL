@@ -71,9 +71,11 @@ class PolicyAdapter(torch.nn.Module):
         return log_prob
 
     def entropy(self, state):
-        """Compute entropy."""
+        """Compute entropy (per sample in batch)."""
         dist = self.policy.get_distribution(state)
-        return dist.entropy().sum(dim=-1)
+        # TanhNormal.entropy() already returns (batch,) with entropy per sample
+        # Do NOT sum again or it will sum over the entire batch!
+        return dist.entropy()
 
     def parameters(self):
         """Pass through to underlying policy."""
