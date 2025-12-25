@@ -112,7 +112,7 @@ class TrainConfig:
     use_baseline: bool = True
 
     # Economic parameters
-    liquidation_flow: float = 0.0  # Post-liquidation cash flow (0 = no recovery)
+    liquidation_flow: float = None  # Post-liquidation cash flow (None = use params.alpha)
 
     # Logging and checkpoints
     log_dir: str = "runs/monte_carlo_time_aug"
@@ -153,8 +153,9 @@ def parse_args() -> TrainConfig:
                        help="Value hidden layer dimensions")
 
     # Economic parameters
-    parser.add_argument("--liquidation_flow", type=float, default=0.0,
-                       help="Post-liquidation cash flow (alpha). Default 0.0 makes bankruptcy very costly.")
+    parser.add_argument("--liquidation_flow", type=float, default=None,
+                       help="Post-liquidation cash flow (alpha). Default None uses params.alpha. "
+                            "With boundary condition, firm chooses optimal liquidation/recapitalization.")
 
     # Logging and checkpoints
     parser.add_argument("--log_dir", type=str, default="runs/monte_carlo_model1", help="TensorBoard log directory")
@@ -791,17 +792,22 @@ def main():
     # 3. Setup reward function
     # =========================================================================
     print("\n[3/6] Setting up reward function...")
+
+    # Use params.alpha if liquidation_flow not specified
+    liquidation_flow = config.liquidation_flow if config.liquidation_flow is not None else params.alpha
+
     reward_fn = GHMRewardFunction(
         discount_rate=params.r - params.mu,
-        issuance_cost=params.lambda_,  # FIXED: Use lambda_ instead of p-1
+        issuance_cost=params.lambda_,
         liquidation_rate=params.omega,
-        liquidation_flow=config.liquidation_flow,  # FIXED: Use configurable parameter
+        liquidation_flow=liquidation_flow,
     )
     print(f"  Discount rate: {params.r - params.mu:.4f}")
     print(f"  Issuance cost: {params.lambda_:.4f}")
-    print(f"  Liquidation flow: {config.liquidation_flow:.4f}")
-    liquidation_value = params.omega * config.liquidation_flow / (params.r - params.mu) if (params.r - params.mu) > 0 else 0.0
+    print(f"  Liquidation flow: {liquidation_flow:.4f}")
+    liquidation_value = params.omega * liquidation_flow / (params.r - params.mu) if (params.r - params.mu) > 0 else 0.0
     print(f"  Liquidation value (ω·α/(r-μ)): {liquidation_value:.4f}")
+    print(f"  Boundary condition: max{{liquidation={liquidation_value:.4f}, recapitalization=V(c*)-cost}}")
 
     # =========================================================================
     # 4. Setup policy and baseline networks
