@@ -55,6 +55,13 @@ class GaussianPolicy(nn.Module):
 
     def _get_mean_log_std(self, state: Tensor) -> Tuple[Tensor, Tensor]:
         mean = self.mean_net(state)
+
+        # SAFETY: Clip raw network outputs to prevent extreme values that would
+        # saturate tanh and cause numerical issues in log probability computation
+        # For TanhNormal, raw outputs > 5 lead to tanh saturation and gradient issues
+        if self.action_bounds is not None:
+            mean = torch.clamp(mean, -5.0, 5.0)
+
         log_std = self.log_std.clamp(*self.log_std_bounds)
         return mean, log_std
 

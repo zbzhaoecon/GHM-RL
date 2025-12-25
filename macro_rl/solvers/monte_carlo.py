@@ -186,9 +186,13 @@ class MonteCarloPolicyGradient(Solver):
         # 4. Compute policy loss (REINFORCE)
         policy_loss = self._compute_policy_loss(trajectories, advantages)
 
-        # Clip policy loss to prevent numerical explosions
-        # (can happen when log probs become extreme at action boundaries)
-        policy_loss = torch.clamp(policy_loss, -1000.0, 1000.0)
+        # DIAGNOSTIC: Check for NaN/Inf in policy loss
+        if not torch.isfinite(policy_loss):
+            print(f"WARNING: Non-finite policy loss detected: {policy_loss.item()}")
+            print(f"  Advantages: min={advantages.min():.4f}, max={advantages.max():.4f}, mean={advantages.mean():.4f}")
+            print(f"  Returns: min={returns.min():.4f}, max={returns.max():.4f}")
+            # Skip this update to prevent corruption
+            return self._get_safe_metrics(trajectories, initial_states, returns, advantages)
 
         # 4b. Add entropy bonus (encourage exploration)
         entropy = self.policy.entropy(initial_states).mean()
@@ -201,6 +205,12 @@ class MonteCarloPolicyGradient(Solver):
         # Total loss combines all objectives
         total_loss = policy_loss - self.entropy_weight * entropy + action_reg_loss
 
+        # DIAGNOSTIC: Check for NaN/Inf in total loss
+        if not torch.isfinite(total_loss):
+            print(f"WARNING: Non-finite total loss detected: {total_loss.item()}")
+            print(f"  Policy loss: {policy_loss.item()}, Entropy: {entropy.item()}, Action reg: {action_reg_loss.item()}")
+            return self._get_safe_metrics(trajectories, initial_states, returns, advantages)
+
         # 5. Update policy
         self.policy_optimizer.zero_grad()
         total_loss.backward()
@@ -210,6 +220,19 @@ class MonteCarloPolicyGradient(Solver):
             self.policy.parameters(),
             self.max_grad_norm
         )
+
+        # DIAGNOSTIC: Check for NaN/Inf in gradients
+        has_nan_grad = False
+        for param in self.policy.parameters():
+            if param.grad is not None and not torch.isfinite(param.grad).all():
+                print(f"WARNING: Non-finite gradient detected in policy parameters")
+                has_nan_grad = True
+                break
+
+        if has_nan_grad:
+            print("WARNING: Skipping optimizer step due to non-finite gradients")
+            self.policy_optimizer.zero_grad()
+            return self._get_safe_metrics(trajectories, initial_states, returns, advantages)
 
         self.policy_optimizer.step()
 
@@ -274,6 +297,21 @@ class MonteCarloPolicyGradient(Solver):
             if mean_actions.shape[1] > 1:
                 metrics['policy/mean_action_1'] = mean_actions[:, 1].mean().item()
                 metrics['policy/std_action_1'] = std_actions[:, 1].mean().item()
+
+            # DIAGNOSTIC: Add statistics for detecting boundary issues
+            actions_sample = trajectories.actions
+            metrics['diagnostics/action_min'] = actions_sample.min().item()
+            metrics['diagnostics/action_max'] = actions_sample.max().item()
+            metrics['diagnostics/action_mean'] = actions_sample.mean().item()
+
+            # Compute log probs for diagnostic purposes
+            with torch.no_grad():
+                states_first = trajectories.states[:, 0, :]  # First state in each trajectory
+                actions_first = trajectories.actions[:, 0, :]  # First action
+                log_probs_sample = self.policy.log_prob(states_first, actions_first)
+                metrics['diagnostics/log_prob_mean'] = log_probs_sample.mean().item()
+                metrics['diagnostics/log_prob_min'] = log_probs_sample.min().item()
+                metrics['diagnostics/log_prob_max'] = log_probs_sample.max().item()
 
         return metrics
 
@@ -383,6 +421,59 @@ class MonteCarloPolicyGradient(Solver):
         self.baseline_optimizer.step()
 
         return baseline_loss, baseline_grad_norm
+
+    def _get_safe_metrics(
+        self,
+        trajectories,
+        initial_states: Tensor,
+        returns: Tensor,
+        advantages: Tensor,
+    ) -> Dict[str, float]:
+        """
+        Return safe metrics when training step fails due to NaN/Inf.
+
+        This prevents crashes and logs diagnostic information.
+        """
+        with torch.no_grad():
+            dist = self.policy(initial_states)
+            if hasattr(dist, 'mode'):
+                mean_actions = dist.mode
+                std_actions = dist.stddev
+            else:
+                mean_actions = dist.mean
+                std_actions = dist.stddev
+
+            action_magnitude = trajectories.actions.abs().mean()
+
+            return {
+                'return/mean': returns.mean().item() if torch.isfinite(returns).all() else 0.0,
+                'return/std': returns.std().item() if torch.isfinite(returns).all() else 0.0,
+                'return/min': returns.min().item() if torch.isfinite(returns).all() else 0.0,
+                'return/max': returns.max().item() if torch.isfinite(returns).all() else 0.0,
+                'loss/policy': 0.0,  # Failed to compute
+                'loss/total': 0.0,
+                'loss/baseline': 0.0,
+                'loss/action_reg': 0.0,
+                'advantage/mean': advantages.mean().item() if torch.isfinite(advantages).all() else 0.0,
+                'advantage/std': advantages.std().item() if torch.isfinite(advantages).all() else 0.0,
+                'advantage/max': advantages.max().item() if torch.isfinite(advantages).all() else 0.0,
+                'advantage/min': advantages.min().item() if torch.isfinite(advantages).all() else 0.0,
+                'episode_length/mean': trajectories.masks.sum(dim=-1).mean().item(),
+                'episode_length/std': trajectories.masks.sum(dim=-1).std().item(),
+                'termination_rate': 0.0,
+                'policy/mean_action_0': mean_actions[:, 0].mean().item(),
+                'policy/std_action_0': std_actions[:, 0].mean().item(),
+                'policy/entropy': 0.0,
+                'policy/action_magnitude': action_magnitude.item() if torch.isfinite(action_magnitude) else 0.0,
+                'grad_norm/policy': 0.0,
+                'grad_norm/baseline': 0.0,
+                'diagnostics/action_min': trajectories.actions.min().item(),
+                'diagnostics/action_max': trajectories.actions.max().item(),
+                'diagnostics/action_mean': trajectories.actions.mean().item(),
+                'diagnostics/log_prob_mean': float('nan'),
+                'diagnostics/log_prob_min': float('nan'),
+                'diagnostics/log_prob_max': float('nan'),
+            }
 
     def _log_progress(self, iteration: int, metrics: Dict[str, float]):
         """
