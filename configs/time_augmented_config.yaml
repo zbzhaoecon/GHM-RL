@@ -1,0 +1,106 @@
+# Time-Augmented GHM Equity Training Configuration
+# This config trains a policy π(c, τ) where the agent observes time-to-horizon
+
+# Experiment metadata
+experiment_name: "ghm_time_augmented"
+description: "GHM equity model with time-augmented dynamics (2D state: c, τ)"
+
+# Model parameters (GHM equity model from Table 1)
+model:
+  # Cash flow parameters
+  alpha: 0.18           # Mean cash flow rate
+  mu: 0.01              # Growth rate
+  r: 0.03               # Interest rate
+  lambda_: 0.02         # Carry cost
+
+  # Volatility parameters
+  sigma_A: 0.25         # Permanent shock volatility
+  sigma_X: 0.12         # Transitory shock volatility
+  rho: -0.2             # Correlation between shocks
+
+  # State space
+  c_max: 2.0            # Maximum cash reserves
+
+  # Equity issuance costs
+  issuance_cost: 0.1    # Proportional cost λ for reward function
+  p: 1.06               # Price impact (for environment, if needed)
+  phi: 0.002            # Fixed cost (for environment, if needed)
+
+  # Liquidation (FIXED: now set to 0)
+  omega: 0.55           # Recovery rate (unused, liquidation_value=0 in code)
+  liquidation_value: 0.0  # Equity holders get nothing in bankruptcy
+
+# Dynamics configuration
+dynamics:
+  type: "time_augmented"  # Use GHMEquityTimeAugmentedDynamics
+  state_dim: 2            # (c, τ)
+
+# Control specification
+control:
+  a_L_max: 10.0          # Maximum dividend rate
+  a_E_max: 0.5           # Maximum equity issuance
+  issuance_threshold: 0.05  # Minimum meaningful issuance (fraction of max)
+
+# Reward function
+reward:
+  type: "ghm_equity"     # Use GHMEquityReward
+  issuance_cost: 0.1     # Same as model.issuance_cost
+
+# Solver configuration
+solver:
+  solver_type: "monte_carlo"  # MonteCarloPolicyGradient
+
+  # Optional: for actor-critic (not used here, but available)
+  critic_loss: "temporal_difference"
+  actor_loss: "policy_gradient"
+  hjb_weight: 0.0
+  use_parallel: false
+  n_workers: 4
+
+# Training parameters
+training:
+  # Time discretization
+  dt: 0.1               # Time step
+  T: 10.0               # Time horizon
+
+  # Policy gradient
+  n_iterations: 10000   # Total training steps
+  n_trajectories: 256   # Trajectories per iteration (batch size)
+
+  # Learning rates
+  lr_policy: 3.0e-4     # Policy learning rate
+  lr_baseline: 1.0e-3   # Baseline (value function) learning rate
+  lr: 1.0e-3            # Combined LR (for actor-critic)
+
+  # Optimization
+  max_grad_norm: 1.0    # Gradient clipping
+  advantage_normalization: true
+  entropy_weight: 0.01  # Entropy regularization
+
+# Policy network architecture
+policy:
+  type: "gaussian"      # GaussianPolicy
+  hidden_dims: [256, 256, 128]  # Hidden layer sizes
+  activation: "relu"    # Activation function
+  log_std_init: -0.5    # Initial log std for exploration
+
+# Baseline (value function) network architecture
+baseline:
+  type: "mlp"           # MLP baseline
+  hidden_dims: [256, 256, 128]  # Hidden layer sizes
+  activation: "relu"
+
+# Logging configuration
+logging:
+  log_dir: "logs/ghm_time_augmented"
+  ckpt_dir: "checkpoints/ghm_time_augmented"
+  log_freq: 50          # Log metrics every N steps
+  eval_freq: 500        # Evaluate policy every N steps
+  ckpt_freq: 1000       # Save checkpoint every N steps
+
+# Miscellaneous
+misc:
+  seed: 42              # Random seed for reproducibility
+  device: "cuda"        # "cuda" or "cpu"
+  experiment_name: null  # Override with --experiment_name
+  resume: null          # Path to checkpoint to resume from
