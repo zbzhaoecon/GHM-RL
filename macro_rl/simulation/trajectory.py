@@ -305,7 +305,8 @@ class TrajectorySimulator:
             Discounted returns (batch,)
 
         Formula:
-            R = Σ_t exp(-ρ·t·dt) · r_t · mask_t + exp(-ρ·T) · r_T
+            R = Σ_t exp(-ρ·t·dt) · r_t · mask_t + exp(-ρ·T_term) · r_T
+            where T_term is the actual termination time for each trajectory
         """
         batch_size, n_steps = rewards.shape
         device = rewards.device
@@ -317,9 +318,12 @@ class TrajectorySimulator:
             discount = torch.exp(torch.tensor(-discount_rate * t * self.dt, device=device))
             returns = returns + discount * rewards[:, t] * masks[:, t]
 
-        # Add terminal reward with appropriate discount
-        # Terminal time is n_steps * dt (or earlier if terminated)
-        terminal_discount = torch.exp(torch.tensor(-discount_rate * n_steps * self.dt, device=device))
+        # FIXED: Compute actual termination time for each trajectory
+        # masks.sum(dim=1) gives the number of active steps before termination
+        termination_times = masks.sum(dim=1)  # (batch,)
+
+        # Discount terminal reward at actual termination time (not always at T)
+        terminal_discount = torch.exp(-discount_rate * termination_times * self.dt)
         returns = returns + terminal_discount * terminal_rewards
 
         return returns
