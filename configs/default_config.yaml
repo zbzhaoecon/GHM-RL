@@ -100,7 +100,6 @@ training:
   # Regularization
   advantage_normalization: true    # Normalize advantages for variance reduction
   entropy_weight: 0.05             # Entropy regularization weight
-  action_reg_weight: 0.01          # L2 regularization on action magnitude
 
   # Baseline settings
   use_baseline: true    # Use value function baseline for variance reduction

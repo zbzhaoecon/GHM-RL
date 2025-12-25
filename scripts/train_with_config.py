@@ -82,6 +82,9 @@ def create_solver_from_config(
     policy,
     baseline,
     simulator,
+    dynamics,
+    control_spec,
+    reward_fn,
 ):
     """Create solver instance based on configuration.
 
@@ -90,6 +93,9 @@ def create_solver_from_config(
         policy: Policy network
         baseline: Baseline/value network
         simulator: Trajectory simulator
+        dynamics: Dynamics model
+        control_spec: Control specification
+        reward_fn: Reward function
 
     Returns:
         Solver instance (MonteCarloPolicyGradient or ModelBasedActorCritic)
@@ -110,16 +116,13 @@ def create_solver_from_config(
             advantage_normalization=config.training.advantage_normalization,
             max_grad_norm=config.training.max_grad_norm,
             entropy_weight=config.training.entropy_weight,
-            action_reg_weight=config.training.action_reg_weight,
         )
     elif config.solver.solver_type == "actor_critic":
-        # Get dynamics from simulator
-        dynamics = simulator.dynamics
-
         solver = ModelBasedActorCritic(
-            actor_critic=policy,  # ActorCritic network
             dynamics=dynamics,
-            simulator=simulator,
+            control_spec=control_spec,
+            reward_fn=reward_fn,
+            actor_critic=policy,  # ActorCritic network
             dt=config.training.dt,
             T=config.training.T,
             critic_loss=config.solver.critic_loss,
@@ -163,7 +166,7 @@ def save_checkpoint(solver, config_manager: ConfigManager, step: int, ckpt_name:
             checkpoint['baseline_optimizer_state_dict'] = solver.baseline_optimizer.state_dict()
 
     elif config.solver.solver_type == "actor_critic":
-        checkpoint['actor_critic_state_dict'] = solver.actor_critic.state_dict()
+        checkpoint['actor_critic_state_dict'] = solver.ac.state_dict()
         checkpoint['optimizer_state_dict'] = solver.optimizer.state_dict()
 
     ckpt_path = os.path.join(config.logging.ckpt_dir, ckpt_name)
@@ -188,7 +191,7 @@ def load_checkpoint(checkpoint_path: str, solver, config_manager: ConfigManager)
             solver.baseline_optimizer.load_state_dict(checkpoint['baseline_optimizer_state_dict'])
 
     elif config.solver.solver_type == "actor_critic":
-        solver.actor_critic.load_state_dict(checkpoint['actor_critic_state_dict'])
+        solver.ac.load_state_dict(checkpoint['actor_critic_state_dict'])
         solver.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     step = checkpoint.get('step', 0)
@@ -212,8 +215,8 @@ def log_visualizations(writer: SummaryWriter, solver, dynamics, step: int, confi
         policy = solver.policy.policy if hasattr(solver.policy, 'policy') else solver.policy
         baseline = solver.baseline
     elif config.solver.solver_type == "actor_critic":
-        policy = solver.actor_critic  # ActorCritic has same interface
-        baseline = solver.actor_critic
+        policy = solver.ac  # ActorCritic has same interface
+        baseline = solver.ac
 
     # Compute visualizations
     results = compute_policy_value_for_visualization(policy, baseline, dynamics, n_points=100)
@@ -263,14 +266,14 @@ def evaluate_policy(solver, config_manager: ConfigManager, n_episodes: int = 50)
 
     elif config.solver.solver_type == "actor_critic":
         # Use Actor-Critic evaluation
-        solver.actor_critic.eval()
+        solver.ac.eval()
 
         with torch.no_grad():
             # Sample initial states
             c_values = torch.rand(n_episodes, 1) * solver.dynamics.state_space.upper[0]
-            trajectories = solver.simulator.rollout(solver.actor_critic, c_values)
+            trajectories = solver.simulator.rollout(solver.ac, c_values)
 
-        solver.actor_critic.train()
+        solver.ac.train()
 
         return {
             'return_mean': trajectories.returns.mean().item(),
@@ -332,7 +335,9 @@ def main():
 
     # Create solver
     print(f"\nCreating {config_manager.config.solver.solver_type} solver...")
-    solver = create_solver_from_config(config_manager, policy, baseline, simulator)
+    solver = create_solver_from_config(
+        config_manager, policy, baseline, simulator, dynamics, control_spec, reward_fn
+    )
 
     # Setup TensorBoard
     config = config_manager.config
