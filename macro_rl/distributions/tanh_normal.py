@@ -140,14 +140,14 @@ class TanhNormal(Distribution):
         # => z = arctanh(2*(action - low)/(high - low) - 1)
 
         normalized = 2.0 * (action - self.low) / (self.high - self.low) - 1.0
-        # Clamp to valid tanh range (MORE conservative to prevent extreme values)
-        # Changed from -0.999, 0.999 to -0.95, 0.95
-        normalized = torch.clamp(normalized, -0.95, 0.95)
+        # Clamp to valid tanh range (relaxed from 0.95 to allow more exploration)
+        # Balance: conservative enough to prevent numerical issues, relaxed enough to allow learning
+        normalized = torch.clamp(normalized, -0.997, 0.997)
         z = torch.atanh(normalized)
 
         # SAFETY: Clip z to prevent extreme values in the base distribution
-        # This prevents log_prob_z from becoming extremely negative
-        z = torch.clamp(z, -5.0, 5.0)
+        # Relaxed from 5.0 to 7.0 to allow larger gradient signals while still preventing overflow
+        z = torch.clamp(z, -7.0, 7.0)
 
         # Log probability of z under base Gaussian
         log_prob_z = self.base_dist.log_prob(z)  # (batch, action_dim)
@@ -170,9 +170,10 @@ class TanhNormal(Distribution):
         # log π(action) = log π(z) - log|da/dz|
         log_prob_action = log_prob_z - jacobian_correction  # (batch, action_dim)
 
-        # SAFETY: Clip individual log probs to prevent extreme values
-        # This prevents gradient explosions from boundary actions
-        log_prob_action = torch.clamp(log_prob_action, min=-20.0, max=20.0)
+        # SAFETY: Clip individual log probs to prevent overflow
+        # Relaxed from [-20, 20] to [-100, 20] to allow proper gradient signals
+        # Min -100 allows policy to escape bad regions, max 20 prevents overflow
+        log_prob_action = torch.clamp(log_prob_action, min=-100.0, max=20.0)
 
         # Sum over action dimensions
         return log_prob_action.sum(dim=-1)  # (batch,)
