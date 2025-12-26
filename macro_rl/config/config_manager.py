@@ -81,6 +81,9 @@ class NetworkConfig:
     log_std_bounds: tuple = (-5.0, 2.0)
     mean_output_clipping: tuple = (-10.0, 10.0)
 
+    # Distribution type for policy
+    distribution_type: str = "tanh_normal"  # Options: "tanh_normal", "beta", "log_normal"
+
 
 @dataclass
 class TrainingConfig:
