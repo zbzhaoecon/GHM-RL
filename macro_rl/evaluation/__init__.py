@@ -13,6 +13,26 @@ import torch
 from typing import Dict, Optional
 
 
+def _get_max_steps(simulator):
+    """
+    Get max_steps from simulator (handles both Parallel and regular simulators).
+
+    Args:
+        simulator: TrajectorySimulator or ParallelTrajectorySimulator
+
+    Returns:
+        int: Maximum number of steps per episode
+    """
+    if hasattr(simulator, 'max_steps'):
+        return simulator.max_steps
+    elif hasattr(simulator, 'sequential_simulator'):
+        return simulator.sequential_simulator.max_steps
+    else:
+        # Fallback: compute from T and dt
+        import math
+        return int(round(simulator.T / simulator.dt))
+
+
 def evaluate_monte_carlo_policy(
     solver,
     dynamics,
@@ -76,7 +96,7 @@ def evaluate_monte_carlo_policy(
     episode_lengths = masks.sum(dim=1)
 
     # Termination rate: fraction that didn't reach max_steps
-    max_steps = solver.simulator.max_steps
+    max_steps = _get_max_steps(solver.simulator)
     terminated_early = (episode_lengths < max_steps).float()
 
     return {
@@ -164,7 +184,7 @@ def evaluate_actor_critic_policy(
     returns = trajectories.returns
     masks = trajectories.masks
     episode_lengths = masks.sum(dim=1)
-    max_steps = solver.simulator.max_steps
+    max_steps = _get_max_steps(solver.simulator)
     terminated_early = (episode_lengths < max_steps).float()
 
     return {
