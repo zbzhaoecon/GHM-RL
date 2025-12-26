@@ -92,6 +92,7 @@ def setup_from_config(
         liquidation_rate=config.reward.liquidation_rate,
         liquidation_flow=config.reward.liquidation_flow,
         fixed_cost=fixed_cost,
+        proportional_cost=params.p,  # Pass p parameter for correct cost calculation
     )
 
     # Setup policy and baseline

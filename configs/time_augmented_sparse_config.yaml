@@ -60,7 +60,7 @@ environment:
 # ============================================================================
 network:
   # Actor-Critic architecture (used when solver_type=actor_critic)
-  hidden_dims: [256, 256]     # Hidden dims for ActorCritic
+  hidden_dims: [64, 64, 32]    # Hidden dims for ActorCritic (smaller network)
   shared_layers: 0             # Number of shared layers (0=no sharing)
 
   # Policy network (for Monte Carlo)
@@ -81,7 +81,7 @@ network:
   #   - beta: Beta distribution (natural for [0, max], can represent zero naturally)
   #   - log_normal: Log-space Gaussian (for actions spanning orders of magnitude)
   # WARNING: Beta distribution has issues with pathwise gradients! Use tanh_normal for actor_critic
-  distribution_type: beta  # Try beta for better zero-representation in equity issuance
+  distribution_type: tanh_normal  # CHANGED: Use tanh_normal for actor_critic pathwise gradients
 
 # ============================================================================
 # TRAINING
@@ -119,14 +119,14 @@ training:
 # ============================================================================
 solver:
   # Solver type: "monte_carlo" or "actor_critic"
-  solver_type: monte_carlo
+  solver_type: actor_critic  # CHANGED: Use actor-critic for pathwise gradients
 
   # Actor-Critic parameters (used when solver_type=actor_critic)
   critic_loss: mc+hjb   # Options: mc, td, hjb, mc+hjb, mc+td, td+hjb
   actor_loss: pathwise  # Options: pathwise, reinforce
   hjb_weight: 0.1       # Weight for HJB regularization
-  use_parallel: false   # Enable parallel simulation
-  n_workers: null       # Number of workers (null=auto)
+  use_parallel: true    # Enable parallel simulation for speed
+  n_workers: 8          # Number of parallel workers
 
   # Monte Carlo parameters (used when solver_type=monte_carlo)
   batch_size: 1000
