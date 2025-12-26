@@ -169,7 +169,11 @@ class MonteCarloPolicyGradient(Solver):
         returns = trajectories.returns  # (B,)
         if self.baseline is not None:
             with torch.no_grad():
-                values = self.baseline(initial_states).detach()  # (B,)
+                # ActorCritic has evaluate() method, ValueNetwork can be called directly
+                if hasattr(self.baseline, 'evaluate'):
+                    values = self.baseline.evaluate(initial_states).detach()  # (B,)
+                else:
+                    values = self.baseline(initial_states).detach()  # (B,)
             advantages = returns - values
         else:
             advantages = returns.clone()
@@ -403,7 +407,11 @@ class MonteCarloPolicyGradient(Solver):
             (baseline_loss, grad_norm)
         """
         # Predict values
-        value_pred = self.baseline(states)  # (B,)
+        # ActorCritic has evaluate() method, ValueNetwork can be called directly
+        if hasattr(self.baseline, 'evaluate'):
+            value_pred = self.baseline.evaluate(states)  # (B,)
+        else:
+            value_pred = self.baseline(states)  # (B,)
 
         # Compute MSE loss
         baseline_loss = F.mse_loss(value_pred, returns.detach())
