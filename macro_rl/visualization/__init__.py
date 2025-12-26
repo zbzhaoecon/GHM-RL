@@ -63,7 +63,11 @@ def compute_policy_value_time_augmented(
 
         # Get value estimates
         if baseline is not None:
-            values = baseline(states).squeeze().cpu().numpy()
+            # ActorCritic has evaluate() method, ValueNetwork can be called directly
+            if hasattr(baseline, 'evaluate'):
+                values = baseline.evaluate(states).squeeze().cpu().numpy()
+            else:
+                values = baseline(states).squeeze().cpu().numpy()
         else:
             values = np.zeros(len(states))
 
@@ -139,7 +143,11 @@ def compute_policy_value_standard(
 
         # Get value estimates
         if baseline is not None:
-            values = baseline(states).squeeze().cpu().numpy()
+            # ActorCritic has evaluate() method, ValueNetwork can be called directly
+            if hasattr(baseline, 'evaluate'):
+                values = baseline.evaluate(states).squeeze().cpu().numpy()
+            else:
+                values = baseline(states).squeeze().cpu().numpy()
         else:
             values = np.zeros(len(states))
 
