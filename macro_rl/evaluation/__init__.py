@@ -126,6 +126,12 @@ def evaluate_actor_critic_policy(
         """Wrapper to make ActorCritic act deterministically."""
         def __init__(self, ac):
             self.ac = ac
+            # Copy over attributes needed by parallel simulator
+            self.state_dim = ac.state_dim
+            self.action_dim = ac.action_dim
+            self.hidden_dims = ac.hidden_dims
+            self.shared_layers = ac.shared_layers
+            self.action_bounds = ac.action_bounds
 
         def act(self, state):
             action, _ = self.ac.sample(state, deterministic=deterministic)
