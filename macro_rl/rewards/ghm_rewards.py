@@ -59,24 +59,39 @@ class GHMRewardFunction(RewardFunction):
         liquidation_rate: float = 1.0,
         liquidation_flow: float = 0.0,
         fixed_cost: float = 0.0,
+        proportional_cost: float = 1.06,  # p parameter from model
     ):
         """
         Initialize GHM reward function.
 
         Args:
             discount_rate: ρ = r - μ
-            issuance_cost: λ (multiplicative cost)
+            issuance_cost: (p-1) or (p-1)/p depending on formulation
             liquidation_rate: ω (fraction recovered)
             liquidation_flow: α (expected flow)
             fixed_cost: φ (fixed cost per issuance)
+            proportional_cost: p (gross-to-net conversion factor)
 
-        TODO: Store parameters
+        IMPORTANT: The correct cost to existing shareholders when issuing
+        gross equity a_E is: a_E * (p-1)/p, not a_E * (p-1).
+
+        For backward compatibility, if issuance_cost is provided as (p-1),
+        it will be automatically converted to (p-1)/p using proportional_cost.
         """
         self.discount_rate_value = discount_rate
-        self.issuance_cost = issuance_cost
+        self.proportional_cost = proportional_cost
+        self.fixed_cost = fixed_cost
         self.liquidation_rate = liquidation_rate
         self.liquidation_flow = liquidation_flow
-        self.fixed_cost = fixed_cost
+
+        # Convert issuance_cost to correct formulation: (p-1)/p
+        # If issuance_cost ≈ (p-1), convert it; otherwise use as-is
+        if abs(issuance_cost - (proportional_cost - 1.0)) < 0.001:
+            # User passed (p-1), convert to (p-1)/p
+            self.issuance_cost = (proportional_cost - 1.0) / proportional_cost
+        else:
+            # User passed correct value or custom value
+            self.issuance_cost = issuance_cost
 
         # Compute liquidation value
         if discount_rate > 0:
@@ -114,20 +129,24 @@ class GHMRewardFunction(RewardFunction):
         a_E = action[:, 1]
 
         # Net payout to existing shareholders: dividends minus equity dilution cost minus fixed cost
+        #
+        # CORRECT FORMULATION (Décamps et al 2017):
         # If a_E is GROSS equity issued, then:
         # - Firm receives: a_E/p in cash (dynamics)
         # - New shareholders get: a_E in equity
         # - Net cost to existing shareholders: a_E - a_E/p = a_E(p-1)/p
         # - Fixed cost φ paid when issuing equity (𝟙(a_E > 0) · φ)
-        # Where issuance_cost = (p-1), so cost = issuance_cost * a_E / p
-        # Note: For p=1.06, this is 0.06/1.06 ≈ 0.0566, not 0.06
-        # But we use the approximation (p-1)*a_E ≈ (p-1)/p * a_E for p ≈ 1
+        #
+        # Where p = proportional_cost (e.g., 1.06), so:
+        # - issuance_cost should be (p-1)/p = 0.06/1.06 ≈ 0.0566
+        # - NOT (p-1) = 0.06 (this overestimates cost by ~6%)
 
         # Fixed cost: only paid when issuing equity (𝟙(a_E > threshold) · φ)
         # Use threshold 1e-6 to match dynamics implementation
         is_issuing = (a_E > 1e-6).to(dtype=action.dtype)
         fixed_cost_penalty = self.fixed_cost * is_issuing
 
+        # Now using correct cost: (p-1)/p * a_E
         return a_L * dt - self.issuance_cost * a_E - fixed_cost_penalty
 
     def terminal_reward(
