@@ -62,7 +62,7 @@ environment:
 # ============================================================================
 network:
   # Actor-Critic unified architecture
-  hidden_dims: [256, 256]     # Shared architecture for actor and critic
+  hidden_dims: [64, 64, 32]    # Smaller network for faster training
   shared_layers: 0             # 0 = no sharing (separate networks)
                                # 1 = share first layer
                                # 2 = share both layers
@@ -137,8 +137,8 @@ solver:
                         # Higher = more regularization, lower = more data-driven
 
   # Parallel simulation
-  use_parallel: false   # Enable parallel trajectory rollouts
-  n_workers: null       # Number of workers (null = auto-detect)
+  use_parallel: true    # Enable parallel trajectory rollouts for speed
+  n_workers: 8          # Number of parallel workers
 
   # Monte Carlo (legacy, for compatibility)
   batch_size: 1000
