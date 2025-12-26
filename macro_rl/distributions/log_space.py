@@ -214,3 +214,20 @@ class LogSpaceTransform(Distribution):
     def mean(self) -> Tensor:
         """Approximate mean."""
         return self.mode
+
+    @property
+    def variance(self) -> Tensor:
+        """Approximate variance using base distribution."""
+        # This is an approximation - true variance requires integration
+        base_var = self.base_dist.variance if hasattr(self.base_dist, 'variance') else self.base_dist.stddev.pow(2)
+        if base_var.dim() > 1:
+            return base_var.sum(dim=-1, keepdim=True).expand(-1, self.low.shape[0])
+        return base_var
+
+    @property
+    def stddev(self) -> Tensor:
+        """Approximate standard deviation."""
+        return self.variance.sqrt()
+
+    # Set arg_constraints to avoid warning
+    arg_constraints = {}

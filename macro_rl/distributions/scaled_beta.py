@@ -247,3 +247,37 @@ class ScaledBeta(Distribution):
     def concentration0(self) -> Tensor:
         """Return beta parameter."""
         return self.beta
+
+    @property
+    def variance(self) -> Tensor:
+        """
+        Variance of the distribution.
+
+        For Beta(α, β), variance = αβ / ((α+β)²(α+β+1))
+        For scaled: Var[a] = (high - low)² * Var[u]
+
+        Returns:
+            Variance (batch, action_dim)
+        """
+        alpha = self.base_dist.concentration1
+        beta = self.base_dist.concentration0
+
+        # Variance of base Beta distribution
+        var_u = (alpha * beta) / ((alpha + beta).pow(2) * (alpha + beta + 1))
+
+        # Scale variance
+        scale = (self.high - self.low).pow(2)
+        return scale * var_u
+
+    @property
+    def stddev(self) -> Tensor:
+        """
+        Standard deviation of the distribution.
+
+        Returns:
+            Standard deviation (batch, action_dim)
+        """
+        return self.variance.sqrt()
+
+    # Set arg_constraints to avoid warning
+    arg_constraints = {}
