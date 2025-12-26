@@ -58,6 +58,7 @@ class GHMRewardFunction(RewardFunction):
         issuance_cost: float = 0.0,
         liquidation_rate: float = 1.0,
         liquidation_flow: float = 0.0,
+        fixed_cost: float = 0.0,
     ):
         """
         Initialize GHM reward function.
@@ -67,6 +68,7 @@ class GHMRewardFunction(RewardFunction):
             issuance_cost: λ (multiplicative cost)
             liquidation_rate: ω (fraction recovered)
             liquidation_flow: α (expected flow)
+            fixed_cost: φ (fixed cost per issuance)
 
         TODO: Store parameters
         """
@@ -74,6 +76,7 @@ class GHMRewardFunction(RewardFunction):
         self.issuance_cost = issuance_cost
         self.liquidation_rate = liquidation_rate
         self.liquidation_flow = liquidation_flow
+        self.fixed_cost = fixed_cost
 
         # Compute liquidation value
         if discount_rate > 0:
@@ -109,15 +112,23 @@ class GHMRewardFunction(RewardFunction):
         """
         a_L = action[:, 0]
         a_E = action[:, 1]
-        # Net payout to existing shareholders: dividends minus equity dilution cost
+
+        # Net payout to existing shareholders: dividends minus equity dilution cost minus fixed cost
         # If a_E is GROSS equity issued, then:
-        # - Firm receives: a_E/p in cash
+        # - Firm receives: a_E/p in cash (dynamics)
         # - New shareholders get: a_E in equity
         # - Net cost to existing shareholders: a_E - a_E/p = a_E(p-1)/p
+        # - Fixed cost φ paid when issuing equity (𝟙(a_E > 0) · φ)
         # Where issuance_cost = (p-1), so cost = issuance_cost * a_E / p
         # Note: For p=1.06, this is 0.06/1.06 ≈ 0.0566, not 0.06
         # But we use the approximation (p-1)*a_E ≈ (p-1)/p * a_E for p ≈ 1
-        return a_L * dt - self.issuance_cost * a_E
+
+        # Fixed cost: only paid when issuing equity (𝟙(a_E > threshold) · φ)
+        # Use threshold 1e-6 to match dynamics implementation
+        is_issuing = (a_E > 1e-6).to(dtype=action.dtype)
+        fixed_cost_penalty = self.fixed_cost * is_issuing
+
+        return a_L * dt - self.issuance_cost * a_E - fixed_cost_penalty
 
     def terminal_reward(
         self,
