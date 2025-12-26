@@ -230,3 +230,6 @@ class TanhNormal(Distribution):
             Standard deviation (batch, action_dim)
         """
         return self.scale
+
+    # Set arg_constraints to avoid warning
+    arg_constraints = {}
