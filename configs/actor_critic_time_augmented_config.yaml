@@ -1,0 +1,222 @@
+# Actor-Critic Time-Augmented GHM Training Configuration
+# ============================================================================
+# This config uses Actor-Critic with time-augmented dynamics π(c, τ)
+# It includes all necessary AC hyperparameters for proper training
+# ============================================================================
+
+# ============================================================================
+# DYNAMICS PARAMETERS
+# ============================================================================
+dynamics:
+  # Cash flow parameters
+  alpha: 0.18           # Mean cash flow rate
+
+  # Growth and rates
+  mu: 0.01              # Growth rate
+  r: 0.03               # Interest rate
+  lambda_: 0.02         # Carry cost
+
+  # Volatility parameters
+  sigma_A: 0.25         # Permanent shock volatility
+  sigma_X: 0.12         # Transitory shock volatility
+  rho: -0.2             # Correlation between shocks
+
+  # State bounds
+  c_max: 2.0            # Maximum cash reserves
+
+  # Equity issuance costs
+  p: 1.06               # Proportional cost
+  phi: 0.002            # Fixed cost
+
+  # Liquidation
+  omega: 0.55           # Recovery rate
+
+# ============================================================================
+# ACTION SPACE
+# ============================================================================
+action_space:
+  # Dividend bounds
+  dividend_min: 0.0
+  dividend_max: 10.0
+
+  # Equity issuance bounds
+  equity_min: 0.0
+  equity_max: 0.5
+
+  # Control spec parameters
+  a_L_max: 10.0
+  a_E_max: 0.5
+  issuance_threshold: 0.05
+  issuance_cost: 0.0
+
+# ============================================================================
+# ENVIRONMENT
+# ============================================================================
+environment:
+  dt: 0.1               # Time step
+  max_steps: 100        # Max steps (T / dt = 10.0 / 0.1 = 100)
+  seed: null
+
+# ============================================================================
+# NETWORK ARCHITECTURE
+# ============================================================================
+network:
+  # Actor-Critic unified architecture
+  hidden_dims: [256, 256]     # Shared architecture for actor and critic
+  shared_layers: 0             # 0 = no sharing (separate networks)
+                               # 1 = share first layer
+                               # 2 = share both layers
+
+  # Legacy fields (for Monte Carlo compatibility, not used by AC)
+  policy_hidden: [256, 256]
+  value_hidden: [256, 256]
+  policy_activation: relu
+  value_activation: relu
+
+  # Policy parameters (inherited by ActorCritic's GaussianPolicy)
+  log_std_bounds: [-5.0, 2.0]
+  mean_output_clipping: [-10.0, 10.0]
+
+  # Distribution type for action sampling
+  # IMPORTANT: For pathwise gradients, use tanh_normal NOT beta
+  # Beta distribution has issues with reparameterization gradients
+  distribution_type: tanh_normal  # Changed from beta to tanh_normal
+
+# ============================================================================
+# TRAINING
+# ============================================================================
+training:
+  # Time horizon
+  dt: 0.1               # Time step
+  T: 10.0               # Total horizon
+
+  # TIME-AUGMENTED DYNAMICS (KEY FLAG!)
+  use_time_augmented: true  # Enable 2D state (c, τ)
+
+  # SPARSE REWARDS (not used for AC pathwise, but kept for compatibility)
+  use_sparse_rewards: false  # AC uses step rewards for pathwise gradients
+
+  # Training iterations
+  n_iterations: 5000    # Training iterations
+  n_trajectories: 2048  # Trajectories per iteration for MC evaluation
+
+  # Learning rates
+  # IMPORTANT: Actor-Critic uses single 'lr' parameter, not lr_policy/lr_baseline
+  lr: 0.0003            # Combined learning rate for actor-critic (3e-4)
+  lr_policy: 0.0003     # Legacy (not used by AC)
+  lr_baseline: 0.0001   # Legacy (not used by AC)
+
+  # Optimization
+  max_grad_norm: 1.0    # Gradient clipping norm
+  advantage_normalization: false
+  entropy_weight: 0.01  # Entropy regularization weight
+
+  # Baseline (not used by AC)
+  use_baseline: false
+
+# ============================================================================
+# SOLVER
+# ============================================================================
+solver:
+  # Solver type
+  solver_type: actor_critic  # CRITICAL: Must be actor_critic, not monte_carlo!
+
+  # Actor-Critic specific parameters
+  # --------------------------------
+
+  # Critic loss type
+  # Options: "mc", "td", "hjb", "mc+hjb", "mc+td", "td+hjb"
+  critic_loss: mc+hjb   # Use both MC returns and HJB equation
+
+  # Actor loss type
+  # Options: "pathwise", "reinforce"
+  actor_loss: pathwise  # Use pathwise gradients (low variance)
+
+  # HJB regularization weight
+  hjb_weight: 0.1       # Weight for HJB loss term (model-based regularization)
+                        # Higher = more regularization, lower = more data-driven
+
+  # Parallel simulation
+  use_parallel: false   # Enable parallel trajectory rollouts
+  n_workers: null       # Number of workers (null = auto-detect)
+
+  # Monte Carlo (legacy, for compatibility)
+  batch_size: 1000
+
+# ============================================================================
+# REWARD FUNCTION
+# ============================================================================
+reward:
+  discount_rate: null    # Use r - mu = 0.03 - 0.01 = 0.02
+  issuance_cost: 0.06    # p - 1 = 1.06 - 1 (proportional cost)
+  liquidation_rate: 0.0  # Set to 0 (equity holders get nothing)
+  liquidation_flow: 0.0  # No liquidation value
+  fixed_cost: 0.002      # φ = 0.002 (fixed cost per equity issuance)
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+logging:
+  log_dir: logs/ghm_actor_critic_time_augmented
+  log_freq: 50
+  eval_freq: 50
+  ckpt_freq: 1000
+  ckpt_dir: checkpoints/ghm_actor_critic_time_augmented
+
+# ============================================================================
+# MISC
+# ============================================================================
+misc:
+  seed: 42
+  device: cpu           # Change to "cuda" if GPU available
+  resume: null
+  experiment_name: actor_critic_time_augmented
+
+# ============================================================================
+# HYPERPARAMETER TUNING NOTES
+# ============================================================================
+# Key parameters to tune for Actor-Critic:
+#
+# 1. Learning rate (lr):
+#    - Default: 3e-4
+#    - Too high: policy divergence, instability
+#    - Too low: slow learning
+#    - Try: 1e-4, 3e-4, 1e-3
+#
+# 2. HJB weight (hjb_weight):
+#    - Default: 0.1
+#    - Higher: more model-based (stable, potentially biased)
+#    - Lower: more data-driven (less biased, potentially unstable)
+#    - Try: 0.01, 0.1, 0.5, 1.0
+#
+# 3. Number of trajectories (n_trajectories):
+#    - Default: 2048
+#    - More: better gradient estimates, slower
+#    - Less: faster, noisier gradients
+#    - Try: 512, 1024, 2048, 4096
+#
+# 4. Entropy weight (entropy_weight):
+#    - Default: 0.01
+#    - Higher: more exploration, slower convergence
+#    - Lower: faster convergence, risk of premature convergence
+#    - Try: 0.001, 0.01, 0.05
+#
+# 5. Gradient clipping (max_grad_norm):
+#    - Default: 1.0
+#    - Higher: allow larger updates
+#    - Lower: more conservative updates
+#    - Try: 0.5, 1.0, 5.0
+#
+# 6. Shared layers (shared_layers):
+#    - 0: No sharing (default, more capacity)
+#    - 1+: Share early layers (faster, less capacity)
+#    - Try: 0, 1
+#
+# 7. Critic loss type (critic_loss):
+#    - "mc": Pure Monte Carlo (data-driven)
+#    - "mc+hjb": MC + model-based HJB (default, balanced)
+#    - "hjb": Pure HJB (model-based, fast but potentially biased)
+#
+# 8. Actor loss type (actor_loss):
+#    - "pathwise": Low variance (default, recommended)
+#    - "reinforce": High variance (slower, but works with discrete actions)

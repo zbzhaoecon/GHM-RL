@@ -59,6 +59,10 @@ environment:
 # NETWORK ARCHITECTURE
 # ============================================================================
 network:
+  # Actor-Critic architecture (used when solver_type=actor_critic)
+  hidden_dims: [256, 256]     # Hidden dims for ActorCritic
+  shared_layers: 0             # Number of shared layers (0=no sharing)
+
   # Policy network (for Monte Carlo)
   policy_hidden: [256, 256, 128]
   policy_activation: relu
@@ -76,6 +80,7 @@ network:
   #   - tanh_normal: Gaussian with tanh squashing (default, good general purpose)
   #   - beta: Beta distribution (natural for [0, max], can represent zero naturally)
   #   - log_normal: Log-space Gaussian (for actions spanning orders of magnitude)
+  # WARNING: Beta distribution has issues with pathwise gradients! Use tanh_normal for actor_critic
   distribution_type: beta  # Try beta for better zero-representation in equity issuance
 
 # ============================================================================
@@ -99,7 +104,7 @@ training:
   # Learning rates
   lr_policy: 0.0003     # 3e-4
   lr_baseline: 0.0001   # 1e-4 (FIXED: 3x slower than policy to prevent baseline overfitting)
-  lr: 0.0003            # For actor-critic
+  lr: 0.0003            # For actor-critic (single optimizer for both actor and critic)
 
   # Optimization
   max_grad_norm: 1.0
@@ -113,10 +118,17 @@ training:
 # SOLVER
 # ============================================================================
 solver:
-  # Solver type
+  # Solver type: "monte_carlo" or "actor_critic"
   solver_type: monte_carlo
 
-  # Monte Carlo
+  # Actor-Critic parameters (used when solver_type=actor_critic)
+  critic_loss: mc+hjb   # Options: mc, td, hjb, mc+hjb, mc+td, td+hjb
+  actor_loss: pathwise  # Options: pathwise, reinforce
+  hjb_weight: 0.1       # Weight for HJB regularization
+  use_parallel: false   # Enable parallel simulation
+  n_workers: null       # Number of workers (null=auto)
+
+  # Monte Carlo parameters (used when solver_type=monte_carlo)
   batch_size: 1000
 
 # ============================================================================
