@@ -381,11 +381,17 @@ class TrajectorySimulator:
 
         # Compute discounted sum of net payouts directly from actions
         for t in range(n_steps):
-            # Net payout at time t: dividends - equity dilution cost
+            # Net payout at time t: dividends - equity dilution cost - fixed cost
             # Cost of raising a_E is (p-1)*a_E where p is proportional cost parameter
+            # Fixed cost φ is only paid when issuing equity (𝟙(a_E > threshold) · φ)
             a_L = actions[:, t, 0]  # Dividend rate
             a_E = actions[:, t, 1]  # Equity issuance
-            net_payout = a_L * self.dt - self.reward_fn.issuance_cost * a_E
+
+            # Fixed cost: only paid when issuing equity (threshold 1e-6 matches dynamics)
+            is_issuing = (a_E > 1e-6).float()
+            fixed_cost_penalty = self.reward_fn.fixed_cost * is_issuing
+
+            net_payout = a_L * self.dt - self.reward_fn.issuance_cost * a_E - fixed_cost_penalty
 
             # Add discounted net payout (only if trajectory was active)
             returns = returns + discounts[t] * net_payout * masks[:, t]

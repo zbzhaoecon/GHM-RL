@@ -83,11 +83,15 @@ def setup_from_config(
     if discount_rate is None:
         discount_rate = params.r - params.mu
 
+    # Handle fixed_cost for backward compatibility with old configs
+    fixed_cost = getattr(config.reward, 'fixed_cost', 0.0)
+
     reward_fn = GHMRewardFunction(
         discount_rate=discount_rate,
         issuance_cost=config.reward.issuance_cost or params.lambda_,
         liquidation_rate=config.reward.liquidation_rate,
         liquidation_flow=config.reward.liquidation_flow,
+        fixed_cost=fixed_cost,
     )
 
     # Setup policy and baseline
