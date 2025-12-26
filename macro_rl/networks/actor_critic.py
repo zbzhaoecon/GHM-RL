@@ -134,17 +134,21 @@ class ActorCritic(nn.Module):
         feat = self._features(state)
         return self.actor.sample(feat, deterministic=deterministic)
 
-    def act(self, state: Tensor) -> Tensor:
+    def act(self, state: Tensor, deterministic: bool = False) -> Tensor:
         """Sample an action without log probability (for rollouts).
 
         Args:
             state: State tensor
+            deterministic: If True, return mean/mode action instead of sampling
 
         Returns:
             action: Sampled action
         """
         feat = self._features(state)
-        return self.actor.act(feat)
+        if deterministic:
+            return self.actor.forward(feat)
+        else:
+            return self.actor.act(feat)
 
     def sample_with_noise(self, state: Tensor, noise: Tensor) -> Tensor:
         """Reparameterized sampling with explicit noise (for differentiable simulation).
