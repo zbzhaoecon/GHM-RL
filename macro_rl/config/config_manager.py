@@ -138,6 +138,7 @@ class RewardConfig:
     issuance_cost: float = 0.0
     liquidation_rate: float = 1.0
     liquidation_flow: float = 0.0
+    fixed_cost: float = 0.0  # φ (fixed cost per equity issuance)
 
 
 @dataclass
