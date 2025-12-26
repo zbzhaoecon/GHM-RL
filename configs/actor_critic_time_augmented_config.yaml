@@ -93,8 +93,9 @@ training:
   # TIME-AUGMENTED DYNAMICS (KEY FLAG!)
   use_time_augmented: true  # Enable 2D state (c, τ)
 
-  # SPARSE REWARDS (not used for AC pathwise, but kept for compatibility)
-  use_sparse_rewards: false  # AC uses step rewards for pathwise gradients
+  # SPARSE REWARDS
+  # For actor-critic: affects critic's MC rollouts, actor still uses dense internally
+  use_sparse_rewards: true  # Use trajectory-level returns for critic training
 
   # Training iterations
   n_iterations: 5000    # Training iterations
