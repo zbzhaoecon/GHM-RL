@@ -75,10 +75,10 @@ class GaussianPolicy(nn.Module):
         # Initialization
         if distribution_type == "beta":
             # For Beta: initialize to output alpha=2, beta=2 (unimodal, centered)
-            # Output of network is log(alpha - 0.1) and log(beta - 0.1) to ensure alpha, beta > 0.1
-            # So to get alpha=2, we want log(2 - 0.1) = log(1.9) ≈ 0.64
+            # Output of network is log(alpha - 1.0) and log(beta - 1.0) to ensure alpha, beta >= 1.0
+            # To get alpha=2: exp(x) + 1 = 2 → exp(x) = 1 → x = 0
             nn.init.uniform_(self.param_net[-1].weight, -0.1, 0.1)
-            nn.init.constant_(self.param_net[-1].bias, 0.6)
+            nn.init.constant_(self.param_net[-1].bias, 0.0)
         else:
             # For Gaussian: start near zero
             nn.init.uniform_(self.param_net[-1].weight, -0.01, 0.01)
@@ -100,16 +100,17 @@ class GaussianPolicy(nn.Module):
 
         if self.distribution_type == "beta":
             # Split into alpha and beta
-            # params are log(alpha - 0.1) and log(beta - 0.1)
+            # params are log(alpha - 1.0) and log(beta - 1.0)
             alpha_raw, beta_raw = torch.chunk(params, 2, dim=-1)
 
-            # Convert to alpha and beta (ensure > 0.1)
-            alpha = torch.exp(alpha_raw) + 0.1
-            beta = torch.exp(beta_raw) + 0.1
+            # Convert to alpha and beta (ensure >= 1.0)
+            # This prevents mode at boundaries (α=1, β=1 gives uniform distribution)
+            alpha = torch.exp(alpha_raw) + 1.0
+            beta = torch.exp(beta_raw) + 1.0
 
-            # Clamp to reasonable range
-            alpha = torch.clamp(alpha, 0.1, 10.0)
-            beta = torch.clamp(beta, 0.1, 10.0)
+            # Clamp to reasonable range (keep >= 1.0 to prevent mode at 0 or 1)
+            alpha = torch.clamp(alpha, 1.0, 10.0)
+            beta = torch.clamp(beta, 1.0, 10.0)
 
             return alpha, beta
 
@@ -205,16 +206,33 @@ class GaussianPolicy(nn.Module):
 
         noise ~ N(0, I), shape (batch, action_dim).
         Returns *action only*; caller can recompute log_prob if needed.
+
+        Note: Only works for Gaussian-based distributions (tanh_normal, log_normal).
+        For Beta distribution, falls back to regular sampling.
         """
-        mean, log_std = self._get_mean_log_std(state)
-        std = log_std.exp()
+        if self.distribution_type == "beta":
+            # Beta distribution uses different reparameterization
+            # Fall back to regular sampling (still differentiable via implicit reparam)
+            dist = self.get_distribution(state)
+            return dist.rsample()
+
+        # Gaussian-based distributions (tanh_normal, log_normal)
+        mean, std = self._get_distribution_params(state)
         raw_action = mean + std * noise
 
         if self.action_bounds is not None:
-            # Apply tanh squashing for bounded actions
-            low, high = self.action_bounds
-            tanh_raw = torch.tanh(raw_action)
-            action = low + (high - low) * (tanh_raw + 1.0) / 2.0
+            if self.distribution_type == "log_normal":
+                # Log-space transformation
+                scale = torch.exp(torch.tensor(3.0, device=raw_action.device)) - 1.0
+                exp_z = torch.exp(raw_action)
+                normalized = (exp_z - 1.0) / scale
+                normalized = torch.clamp(normalized, 0.0, 1.0)
+                action = self.action_low + (self.action_high - self.action_low) * normalized
+            else:
+                # TanhNormal: apply tanh squashing for bounded actions
+                low, high = self.action_bounds
+                tanh_raw = torch.tanh(raw_action)
+                action = low + (high - low) * (tanh_raw + 1.0) / 2.0
         else:
             action = raw_action
 
