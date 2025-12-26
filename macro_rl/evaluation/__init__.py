@@ -123,12 +123,30 @@ def evaluate_actor_critic_policy(
 
     # Create deterministic policy wrapper
     class DeterministicPolicy:
+        """Wrapper to make ActorCritic act deterministically."""
         def __init__(self, ac):
             self.ac = ac
 
         def act(self, state):
             action, _ = self.ac.sample(state, deterministic=deterministic)
             return action
+
+        def state_dict(self):
+            """Delegate to underlying network for serialization."""
+            return self.ac.state_dict()
+
+        def load_state_dict(self, state_dict):
+            """Delegate to underlying network for deserialization."""
+            self.ac.load_state_dict(state_dict)
+
+        def parameters(self):
+            """Delegate to underlying network for device detection."""
+            return self.ac.parameters()
+
+        def to(self, device):
+            """Delegate to underlying network for device movement."""
+            self.ac.to(device)
+            return self
 
     with torch.no_grad():
         det_policy = DeterministicPolicy(solver.ac)
