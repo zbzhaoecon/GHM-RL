@@ -71,6 +71,13 @@ network:
   log_std_bounds: [-2.0, 0.5]
   mean_output_clipping: [-10.0, 10.0]
 
+  # Distribution type for action sampling
+  # Options:
+  #   - tanh_normal: Gaussian with tanh squashing (default, good general purpose)
+  #   - beta: Beta distribution (natural for [0, max], can represent zero naturally)
+  #   - log_normal: Log-space Gaussian (for actions spanning orders of magnitude)
+  distribution_type: beta  # Try beta for better zero-representation in equity issuance
+
 # ============================================================================
 # TRAINING
 # ============================================================================

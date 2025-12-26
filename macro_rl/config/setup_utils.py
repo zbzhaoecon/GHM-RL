@@ -111,12 +111,14 @@ def setup_from_config(
         baseline = actor_critic  # Same network
     else:
         # Separate policy and value networks for Monte Carlo
+        distribution_type = getattr(config.network, 'distribution_type', 'tanh_normal')
         policy = GaussianPolicy(
             input_dim=state_dim,
             output_dim=action_dim,
             hidden_dims=list(config.network.policy_hidden),
             action_bounds=(control_spec.lower, control_spec.upper),
             log_std_bounds=tuple(config.network.log_std_bounds),
+            distribution_type=distribution_type,
         ).to(device)
 
         baseline = None
