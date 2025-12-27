@@ -370,7 +370,7 @@ def main():
         # Evaluation
         if step % config.logging.eval_freq == 0:
             print(f"\n[Evaluation at step {step}]")
-            eval_metrics = evaluate_policy_local(solver, config_manager, dynamics, n_episodes=50)
+            eval_metrics = evaluate_policy_local(solver, config_manager, dynamics, n_episodes=1024)
 
             writer.add_scalar("eval/return_mean", eval_metrics['return_mean'], step)
             writer.add_scalar("eval/return_std", eval_metrics['return_std'], step)
