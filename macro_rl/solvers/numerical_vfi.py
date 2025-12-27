@@ -82,7 +82,7 @@ class NumericalVFISolver:
         self.tau_grid = np.linspace(0, self.config.T, self.config.n_tau)
 
         self.dc = self.c_grid[1] - self.c_grid[0]
-        self.dtau = self.config.dt
+        self.dtau = self.tau_grid[1] - self.tau_grid[0] if len(self.tau_grid) > 1 else self.config.dt
 
         # Action grids
         self.dividend_grid = np.linspace(0, self.config.dividend_max, self.config.n_dividend)
@@ -244,9 +244,12 @@ class NumericalVFISolver:
             V_c_array = np.full(n_actions, V_c)
 
         # Vectorized reward computation
+        # reward = a_L - a_E (dividends minus dilution)
+        # Note: Fixed cost φ is already included in drift calculation
         rewards = dividend_actions - equity_actions
 
         # Vectorized HJB RHS
+        # rhs = instantaneous_reward + drift·V_c + 0.5·σ²·V_cc
         rhs_values = rewards + drifts * V_c_array + 0.5 * diff_sqs * V_cc
 
         # Find best action
