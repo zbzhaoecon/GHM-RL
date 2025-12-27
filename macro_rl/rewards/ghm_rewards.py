@@ -26,8 +26,11 @@ class GHMRewardFunction(RewardFunction):
         - τ: Liquidation time (c reaches 0)
 
     In discrete time:
-        Per-step reward: r_t = a_L·dt - (1+λ)·a_E
+        Per-step reward: r_t = (a_L - λ·a_E - φ·𝟙(a_E>0))·dt
         Terminal reward: r_T = ω·α/(r-μ) (liquidation value)
+
+    Note: All terms are scaled by dt since a_L and a_E are RATES (per unit time)
+    in the dynamics. This ensures consistency between rewards and state evolution.
 
     where ω is the liquidation recovery rate.
 
@@ -110,11 +113,15 @@ class GHMRewardFunction(RewardFunction):
         Compute per-step reward.
 
         Formula:
-            r_t = a_L·dt - (1+λ)·a_E
+            r_t = (a_L - λ·a_E - φ·𝟙(a_E>0))·dt
 
         where:
-            - a_L = action[:, 0] (dividend rate)
-            - a_E = action[:, 1] (equity issuance)
+            - a_L = action[:, 0] (dividend rate, per unit time)
+            - a_E = action[:, 1] (equity issuance rate, per unit time)
+            - λ = issuance_cost = (p-1)/p
+            - φ = fixed_cost
+
+        All terms scaled by dt since a_L and a_E are RATES in the dynamics.
 
         Args:
             state: Current states (batch, state_dim)
@@ -146,8 +153,15 @@ class GHMRewardFunction(RewardFunction):
         is_issuing = (a_E > 1e-6).to(dtype=action.dtype)
         fixed_cost_penalty = self.fixed_cost * is_issuing
 
-        # Now using correct cost: (p-1)/p * a_E
-        return a_L * dt - self.issuance_cost * a_E - fixed_cost_penalty
+        # IMPORTANT: All terms must be scaled consistently with dt since
+        # a_L and a_E are RATES (per unit time) in the dynamics.
+        # The dynamics use: drift_c = ... - a_L + a_E/p - φ
+        # So the reward should be: (a_L - cost_E * a_E - φ) * dt
+        #
+        # Previously, only a_L was scaled by dt, creating an arbitrage where
+        # issuing equity was nearly "free" (cost not scaled) but added cash
+        # to the firm (through drift * dt).
+        return (a_L - self.issuance_cost * a_E - fixed_cost_penalty) * dt
 
     def terminal_reward(
         self,
