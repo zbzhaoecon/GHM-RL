@@ -367,9 +367,12 @@ class TrajectorySimulator:
             Trajectory returns (batch,)
 
         Formula for GHM model:
-            R = ∫_0^T e^(-ρt) (dL_t - (p-1)dE_t) + e^(-ρT) V_terminal
-              = Σ_t e^(-ρt·dt) (a_L[t]·dt - (p-1)·a_E[t]) · mask[t] + terminal
-            where p is the equity issuance cost parameter
+            R = ∫_0^T e^(-ρt) (dL_t - λ·dE_t - φ·𝟙(dE>0)) + e^(-ρT) V_terminal
+              = Σ_t e^(-ρt·dt) (a_L[t] - λ·a_E[t] - φ·𝟙(a_E>0))·dt · mask[t] + terminal
+            where λ = (p-1)/p is the proportional issuance cost
+
+        IMPORTANT: All terms are scaled by dt since a_L and a_E are RATES
+        (per unit time) in the dynamics.
         """
         batch_size, n_steps = actions.shape[0], actions.shape[1]
         device = actions.device
@@ -389,16 +392,18 @@ class TrajectorySimulator:
 
         for t in range(n_steps):
             # Net payout at time t: dividends - equity dilution cost - fixed cost
-            # Cost of raising a_E is (p-1)*a_E where p is proportional cost parameter
+            # Cost of raising a_E is (p-1)/p * a_E where p is proportional cost parameter
             # Fixed cost φ is only paid when issuing equity (𝟙(a_E > threshold) · φ)
             a_L = actions[:, t, 0]  # Dividend rate
-            a_E = actions[:, t, 1]  # Equity issuance
+            a_E = actions[:, t, 1]  # Equity issuance rate
 
             # Fixed cost: only paid when issuing equity (threshold 1e-6 matches dynamics)
             is_issuing = (a_E > 1e-6).float()
             fixed_cost_penalty = self.reward_fn.fixed_cost * is_issuing
 
-            net_payout = a_L * self.dt - self.reward_fn.issuance_cost * a_E - fixed_cost_penalty
+            # IMPORTANT: All terms scaled by dt since a_L, a_E are RATES in dynamics
+            # This matches the step_reward function and ensures no arbitrage
+            net_payout = (a_L - self.reward_fn.issuance_cost * a_E - fixed_cost_penalty) * self.dt
 
             # DIAGNOSTIC: Accumulate totals
             active_mask = masks[:, t]
