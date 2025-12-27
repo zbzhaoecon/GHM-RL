@@ -186,15 +186,19 @@ class GHMRewardFunction(RewardFunction):
         # For bankrupt trajectories: use liquidation value (typically 0)
         terminal_rewards = terminal_rewards + terminated_f * liquidation_value
 
-        # For non-bankrupt trajectories at horizon end: bootstrap from value function
-        if value_function is not None:
-            non_terminated = ~terminated
-            if non_terminated.any():
-                with torch.no_grad():
-                    # Bootstrap from value function V(c, τ) at final state
-                    # This provides the boundary condition V(c, 0) = V(c)
-                    continuation_values = value_function(state).squeeze()
-                    terminal_rewards = terminal_rewards + non_terminated.float() * continuation_values
+        # For non-bankrupt trajectories at horizon end (τ=0):
+        # V(c, 0) = perpetuity value of remaining cash
+        # Use FIXED formula to avoid feedback loop with learned value function
+        non_terminated = ~terminated
+        if non_terminated.any():
+            # Extract final cash level (first state component)
+            c_final = state[non_terminated, 0]
+
+            # Boundary condition: V(c, 0) = c (can liquidate for cash value)
+            # Simple linear boundary: firm with cash c at horizon end is worth c
+            horizon_value = c_final
+
+            terminal_rewards[non_terminated] = horizon_value
 
         return terminal_rewards
 
