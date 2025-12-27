@@ -136,6 +136,7 @@ def create_solver_from_config(
             max_grad_norm=config.training.max_grad_norm,
             use_parallel=config.solver.use_parallel,
             n_workers=config.solver.n_workers,
+            use_sparse_rewards=config.training.use_sparse_rewards,
         )
     else:
         raise ValueError(f"Unknown solver type: {config.solver.solver_type}")

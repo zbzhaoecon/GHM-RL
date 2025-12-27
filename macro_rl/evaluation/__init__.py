@@ -7,10 +7,17 @@ This module provides evaluation functions for different solver types:
 - Time-augmented vs standard dynamics
 
 Separated from training scripts for better modularity and reusability.
+
+IMPORTANT: Evaluation always uses GROUND TRUTH sparse rewards (trajectory-level)
+regardless of training configuration. This ensures consistent and comparable
+evaluation across different training methods. Sparse rewards are preferred
+because they compute the objective directly from actions without intermediate
+step reward calculations, providing more accurate and numerically stable results.
 """
 
 import torch
 from typing import Dict, Optional
+from macro_rl.simulation.trajectory import TrajectorySimulator
 
 
 def _get_max_steps(simulator):
@@ -41,6 +48,11 @@ def evaluate_monte_carlo_policy(
 ) -> Dict[str, float]:
     """
     Evaluate Monte Carlo policy on deterministic rollouts.
+
+    IMPORTANT: Uses GROUND TRUTH sparse rewards for evaluation, regardless of
+    training configuration. This ensures consistent evaluation across methods.
+    Sparse rewards compute the objective directly from actions for better
+    numerical accuracy.
 
     Args:
         solver: MonteCarloPolicyGradient solver
@@ -73,6 +85,16 @@ def evaluate_monte_carlo_policy(
     else:
         raise ValueError(f"Unsupported state dimension: {state_space.dim}")
 
+    # Create GROUND TRUTH evaluation simulator (always use sparse rewards)
+    eval_simulator = TrajectorySimulator(
+        dynamics=solver.simulator.dynamics,
+        control_spec=solver.simulator.control_spec,
+        reward_fn=solver.simulator.reward_fn,
+        dt=solver.simulator.dt,
+        T=solver.simulator.T,
+        use_sparse_rewards=True,  # ALWAYS use sparse rewards for ground truth evaluation
+    )
+
     # Create deterministic policy wrapper
     class DeterministicPolicy:
         def __init__(self, policy):
@@ -84,7 +106,7 @@ def evaluate_monte_carlo_policy(
 
     with torch.no_grad():
         det_policy = DeterministicPolicy(solver.policy)
-        trajectories = solver.simulator.rollout(det_policy, initial_states)
+        trajectories = eval_simulator.rollout(det_policy, initial_states)
 
     solver.policy.train()
 
@@ -96,7 +118,7 @@ def evaluate_monte_carlo_policy(
     episode_lengths = masks.sum(dim=1)
 
     # Termination rate: fraction that didn't reach max_steps
-    max_steps = _get_max_steps(solver.simulator)
+    max_steps = _get_max_steps(eval_simulator)
     terminated_early = (episode_lengths < max_steps).float()
 
     return {
@@ -114,6 +136,11 @@ def evaluate_actor_critic_policy(
 ) -> Dict[str, float]:
     """
     Evaluate Actor-Critic policy.
+
+    IMPORTANT: Uses GROUND TRUTH sparse rewards for evaluation, regardless of
+    training configuration. This ensures consistent evaluation across methods.
+    Sparse rewards compute the objective directly from actions for better
+    numerical accuracy.
 
     Args:
         solver: ModelBasedActorCritic solver
@@ -140,6 +167,16 @@ def evaluate_actor_critic_policy(
         initial_states = torch.cat([c_values, tau_values], dim=1)
     else:
         raise ValueError(f"Unsupported state dimension: {state_space.dim}")
+
+    # Create GROUND TRUTH evaluation simulator (always use sparse rewards)
+    eval_simulator = TrajectorySimulator(
+        dynamics=solver.dynamics,
+        control_spec=solver.control_spec,
+        reward_fn=solver.reward_fn,
+        dt=solver.dt,
+        T=solver.T,
+        use_sparse_rewards=True,  # ALWAYS use sparse rewards for ground truth evaluation
+    )
 
     # Create deterministic policy wrapper
     class DeterministicPolicy:
@@ -176,7 +213,7 @@ def evaluate_actor_critic_policy(
 
     with torch.no_grad():
         det_policy = DeterministicPolicy(solver.ac)
-        trajectories = solver.simulator.rollout(det_policy, initial_states)
+        trajectories = eval_simulator.rollout(det_policy, initial_states)
 
     solver.ac.train()
 
@@ -184,7 +221,7 @@ def evaluate_actor_critic_policy(
     returns = trajectories.returns
     masks = trajectories.masks
     episode_lengths = masks.sum(dim=1)
-    max_steps = _get_max_steps(solver.simulator)
+    max_steps = _get_max_steps(eval_simulator)
     terminated_early = (episode_lengths < max_steps).float()
 
     return {
