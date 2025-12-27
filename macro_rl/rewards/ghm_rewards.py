@@ -16,49 +16,59 @@ class GHMRewardFunction(RewardFunction):
     Reward function for GHM equity model.
 
     The firm maximizes:
-        V(c) = E[ ∫_0^τ e^(-ρt) dL_t - (1+λ) dE_t ]
+        V(c) = E[ ∫_0^τ e^(-ρt) (dL_t - dE_t - φ·𝟙(dE>0)) ]
 
     where:
         - dL_t: Dividend payouts (continuous control a_L)
-        - dE_t: Equity issuances (singular control a_E)
-        - λ: Fixed cost of equity issuance
+        - dE_t: Gross equity issuances (what new shareholders pay)
+        - φ: Fixed cost of equity issuance
         - ρ: Discount rate = r - μ
         - τ: Liquidation time (c reaches 0)
 
+    IMPORTANT: The cost of issuing gross equity a_E is the FULL amount a_E,
+    not (p-1)/p * a_E. This is because:
+        - New shareholders pay a_E (gross)
+        - Firm receives a_E/p in cash (after proportional cost)
+        - New shareholders get claims worth a_E
+        - Dilution to existing shareholders = a_E
+
+    The dynamics add a_E/p to cash, so the VALUE FUNCTION captures the
+    benefit of the cash inflow. The REWARD captures the immediate dilution.
+
+    HJB first-order condition for optimal equity issuance:
+        -1 + V'(c)/p = 0  →  V' = p
+    So equity should only be issued when marginal value of cash > p = 1.06.
+
     In discrete time:
-        Per-step reward: r_t = (a_L - λ·a_E - φ·𝟙(a_E>0))·dt
+        Per-step reward: r_t = (a_L - a_E - φ·𝟙(a_E>0))·dt
         Terminal reward: r_T = ω·α/(r-μ) (liquidation value)
 
     Note: All terms are scaled by dt since a_L and a_E are RATES (per unit time)
-    in the dynamics. This ensures consistency between rewards and state evolution.
-
-    where ω is the liquidation recovery rate.
+    in the dynamics.
 
     Parameters:
         discount_rate: ρ = r - μ
-        issuance_cost: λ (fixed cost parameter)
         liquidation_rate: ω (recovery rate at bankruptcy)
         liquidation_flow: α (expected flow at bankruptcy)
 
     Example:
         >>> reward_fn = GHMRewardFunction(
         ...     discount_rate=0.03,
-        ...     issuance_cost=0.1,
         ...     liquidation_rate=0.8,
         ...     liquidation_flow=0.5,
         ... )
         >>>
         >>> # Compute step reward
         >>> state = torch.tensor([[2.0]])  # c = 2.0
-        >>> action = torch.tensor([[0.5, 0.0]])  # a_L=0.5, a_E=0
+        >>> action = torch.tensor([[0.5, 1.0]])  # a_L=0.5, a_E=1.0
         >>> reward = reward_fn.step_reward(state, action, state, dt=0.01)
-        >>> # reward = 0.5 * 0.01 - (1+0.1) * 0 = 0.005
+        >>> # reward = (0.5 - 1.0) * 0.01 = -0.005
     """
 
     def __init__(
         self,
         discount_rate: float,
-        issuance_cost: float = 0.0,
+        issuance_cost: float = 0.0,  # Deprecated, kept for backward compatibility
         liquidation_rate: float = 1.0,
         liquidation_flow: float = 0.0,
         fixed_cost: float = 0.0,
@@ -69,17 +79,15 @@ class GHMRewardFunction(RewardFunction):
 
         Args:
             discount_rate: ρ = r - μ
-            issuance_cost: (p-1) or (p-1)/p depending on formulation
+            issuance_cost: DEPRECATED - ignored, cost is always 1.0 (full dilution)
             liquidation_rate: ω (fraction recovered)
             liquidation_flow: α (expected flow)
             fixed_cost: φ (fixed cost per issuance)
-            proportional_cost: p (gross-to-net conversion factor)
+            proportional_cost: p (gross-to-net conversion factor, used in dynamics)
 
-        IMPORTANT: The correct cost to existing shareholders when issuing
-        gross equity a_E is: a_E * (p-1)/p, not a_E * (p-1).
-
-        For backward compatibility, if issuance_cost is provided as (p-1),
-        it will be automatically converted to (p-1)/p using proportional_cost.
+        IMPORTANT: The dilution cost is the FULL gross equity a_E, not a fraction.
+        This ensures the HJB first-order condition is: V'(c) = p (not V'(c) = p-1).
+        Equity issuance is only optimal when marginal value of cash exceeds p.
         """
         self.discount_rate_value = discount_rate
         self.proportional_cost = proportional_cost
@@ -87,14 +95,9 @@ class GHMRewardFunction(RewardFunction):
         self.liquidation_rate = liquidation_rate
         self.liquidation_flow = liquidation_flow
 
-        # Convert issuance_cost to correct formulation: (p-1)/p
-        # If issuance_cost ≈ (p-1), convert it; otherwise use as-is
-        if abs(issuance_cost - (proportional_cost - 1.0)) < 0.001:
-            # User passed (p-1), convert to (p-1)/p
-            self.issuance_cost = (proportional_cost - 1.0) / proportional_cost
-        else:
-            # User passed correct value or custom value
-            self.issuance_cost = issuance_cost
+        # Cost coefficient is 1.0 (full gross equity = full dilution)
+        # The issuance_cost parameter is deprecated and ignored
+        self.issuance_cost = 1.0
 
         # Compute liquidation value
         if discount_rate > 0:
@@ -113,15 +116,21 @@ class GHMRewardFunction(RewardFunction):
         Compute per-step reward.
 
         Formula:
-            r_t = (a_L - λ·a_E - φ·𝟙(a_E>0))·dt
+            r_t = (a_L - a_E - φ·𝟙(a_E>0))·dt
 
         where:
             - a_L = action[:, 0] (dividend rate, per unit time)
-            - a_E = action[:, 1] (equity issuance rate, per unit time)
-            - λ = issuance_cost = (p-1)/p
+            - a_E = action[:, 1] (gross equity issuance rate, per unit time)
             - φ = fixed_cost
 
-        All terms scaled by dt since a_L and a_E are RATES in the dynamics.
+        The cost of equity issuance is the FULL gross amount a_E (not a fraction).
+        This is the correct formulation because:
+            - New shareholders pay a_E (gross)
+            - Firm receives a_E/p in cash (captured by dynamics)
+            - Dilution to existing shareholders = a_E (captured by reward)
+
+        HJB first-order condition: -1 + V'(c)/p = 0 → V' = p
+        Equity is optimal only when marginal value of cash > p = 1.06.
 
         Args:
             state: Current states (batch, state_dim)
@@ -135,32 +144,12 @@ class GHMRewardFunction(RewardFunction):
         a_L = action[:, 0]
         a_E = action[:, 1]
 
-        # Net payout to existing shareholders: dividends minus equity dilution cost minus fixed cost
-        #
-        # CORRECT FORMULATION (Décamps et al 2017):
-        # If a_E is GROSS equity issued, then:
-        # - Firm receives: a_E/p in cash (dynamics)
-        # - New shareholders get: a_E in equity
-        # - Net cost to existing shareholders: a_E - a_E/p = a_E(p-1)/p
-        # - Fixed cost φ paid when issuing equity (𝟙(a_E > 0) · φ)
-        #
-        # Where p = proportional_cost (e.g., 1.06), so:
-        # - issuance_cost should be (p-1)/p = 0.06/1.06 ≈ 0.0566
-        # - NOT (p-1) = 0.06 (this overestimates cost by ~6%)
-
         # Fixed cost: only paid when issuing equity (𝟙(a_E > threshold) · φ)
-        # Use threshold 1e-6 to match dynamics implementation
         is_issuing = (a_E > 1e-6).to(dtype=action.dtype)
         fixed_cost_penalty = self.fixed_cost * is_issuing
 
-        # IMPORTANT: All terms must be scaled consistently with dt since
-        # a_L and a_E are RATES (per unit time) in the dynamics.
-        # The dynamics use: drift_c = ... - a_L + a_E/p - φ
-        # So the reward should be: (a_L - cost_E * a_E - φ) * dt
-        #
-        # Previously, only a_L was scaled by dt, creating an arbitrage where
-        # issuing equity was nearly "free" (cost not scaled) but added cash
-        # to the firm (through drift * dt).
+        # Reward = (dividends - full dilution - fixed cost) * dt
+        # issuance_cost = 1.0 (full gross equity as dilution cost)
         return (a_L - self.issuance_cost * a_E - fixed_cost_penalty) * dt
 
     def terminal_reward(

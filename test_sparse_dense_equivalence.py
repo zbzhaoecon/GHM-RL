@@ -20,7 +20,7 @@ def test_sparse_dense_equivalence():
     n_steps = 10
     dt = 0.1
     discount_rate = 0.02  # r - mu
-    issuance_cost = 0.1
+    issuance_cost = 1.0   # Full gross equity = full dilution cost
 
     # Create random actions and masks
     torch.manual_seed(42)
