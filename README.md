@@ -147,75 +147,6 @@ cd GHM-RL
 pip install -e .
 ```
 
-### 2. Train with Pathwise Gradient (Recommended)
-
-```bash
-python macro_rl/scripts/train_pathwise.py \
-    --n_iterations 5000 \
-    --n_trajectories 100 \
-    --lr 1e-3 \
-    --dt 0.01 \
-    --T 5.0
-```
-
-### 3. Validate Solution
-
-```bash
-python scripts/validate.py --model results/pathwise/policy.pt
-```
-
----
-
-## Implementation Status
-
-### ✅ Completed (Verified Correct):
-- `dynamics/base.py` - Abstract interface for continuous-time models
-- `dynamics/ghm_equity.py` - GHM 1D dynamics (drift, diffusion, parameters)
-
-### 📝 Template Created (Ready for Implementation):
-- `core/` - State space and parameter management
-- `simulation/` - SDE integration and trajectory generation
-- `control/` - Two-control specification with masking
-- `rewards/` - Net payout objective function
-- `policies/` - Gaussian and deterministic policies
-- `values/` - Value networks with autograd
-- `solvers/` - Three model-based algorithms
-- `validation/` - HJB residual and boundary checks
-
-### ⏳ To Be Rewritten:
-- `envs/ghm_equity.py` - Update for two controls (for model-free baselines)
-
----
-
-## Implementation Roadmap
-
-### Phase 1: Core Infrastructure (Week 1)
-- [ ] Implement `simulation/sde.py` - Euler-Maruyama integrator
-- [ ] Implement `simulation/trajectory.py` - Trajectory generation
-- [ ] Implement `control/ghm_control.py` - Two-control masking
-- [ ] Implement `rewards/ghm_rewards.py` - Net payout reward
-- [ ] Unit tests for all components
-
-### Phase 2: Pathwise Gradient Solver (Week 2)
-- [ ] Implement `policies/neural.py` - Gaussian policy with reparameterization
-- [ ] Implement `simulation/differentiable.py` - Differentiable simulation
-- [ ] Implement `solvers/pathwise.py` - Pathwise gradient training
-- [ ] Complete `scripts/train_pathwise.py` - End-to-end training
-- [ ] Validate on simplified problem
-
-### Phase 3: Alternative Solvers (Week 3)
-- [ ] Implement `solvers/monte_carlo.py` - Monte Carlo baseline
-- [ ] Implement `values/neural.py` - Value network with Hessian support
-- [ ] Implement `solvers/deep_galerkin.py` - HJB-based solver
-- [ ] Compare all three approaches
-
-### Phase 4: Validation & Analysis (Week 4)
-- [ ] Implement `validation/hjb_residual.py` - HJB equation checking
-- [ ] Implement `validation/boundary_conditions.py` - Smooth pasting checks
-- [ ] Reproduce GHM paper figures
-- [ ] Sensitivity analysis
-
----
 
 ## Key Design Principles
 
@@ -241,31 +172,7 @@ All operations support `(batch, ...)` dimensions for GPU efficiency and Monte Ca
 
 ---
 
-## Model-Based vs Model-Free Comparison
 
-| Aspect | Model-Free (PPO/SAC) | Model-Based (Pathwise) |
-|--------|----------------------|------------------------|
-| Samples per update | ~2048 from environment | Unlimited (free simulation) |
-| State coverage | Only visited states | Any state |
-| Gradient variance | High (REINFORCE) | Low (exact via chain rule) |
-| Convergence | Slow (~500k steps) | Fast (~5k iterations) |
-| Validation | Indirect (returns) | Direct (HJB residual) |
-
----
-
-## References
-
-### Continuous-Time Finance:
-- D'ecamps et al. (2017): Corporate Policies with Permanent and Transitory Shocks
-- Bolton et al.: Executive Compensation and Short-termism
-- DeMarzo & Sannikov: Continuous-time agency models
-
-### Model-Based RL:
-- Reparameterization trick: Kingma & Welling (2013) - Auto-Encoding Variational Bayes
-- Deep Galerkin Method: Sirignano & Spiliopoulos (2018) - DGM for PDEs
-- Pathwise gradients: Williams (1992) - REINFORCE algorithms
-
----
 
 ## Documentation
 
