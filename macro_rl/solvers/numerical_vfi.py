@@ -16,6 +16,8 @@ from typing import Dict, Tuple, Optional
 from dataclasses import dataclass
 import torch
 from tqdm import tqdm
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
 
 
 @dataclass
@@ -420,4 +422,419 @@ class NumericalVFISolver:
         i = np.argmin(np.abs(self.c_grid - c))
         j = np.argmin(np.abs(self.tau_grid - tau))
 
+        return self.V[i, j]
+
+
+class PolicyIterationSolver:
+    """
+    Policy Iteration (Howard's Algorithm) solver for time-augmented GHM model.
+
+    Unlike VFI which solves a nonlinear HJB at each step, Policy Iteration:
+    1. Fixes the policy (dividend, equity decisions)
+    2. Solves the resulting LINEAR PDE for the value function
+    3. Updates the policy based on the new value function
+    4. Repeats until convergence
+
+    This is more stable because step 2 is a linear problem (tridiagonal solve).
+    """
+
+    def __init__(self, dynamics, config: VFIConfig = None):
+        """
+        Initialize Policy Iteration solver.
+
+        Args:
+            dynamics: GHMEquityTimeAugmentedDynamics instance
+            config: VFI configuration (reuses same config structure)
+        """
+        self.dynamics = dynamics
+        self.config = config or VFIConfig()
+        self.p = dynamics.p  # Model parameters
+
+        # Discount rate
+        self.rho = self.p.r - self.p.mu
+
+        # Create grids
+        self._setup_grids()
+
+        # Initialize value function and policies
+        self.V = None
+        self.policy_dividend = None
+        self.policy_equity = None
+
+    def _setup_grids(self):
+        """Create state and action grids."""
+        # State grids
+        self.c_grid = np.linspace(self.config.c_min, self.config.c_max, self.config.n_c)
+        self.tau_grid = np.linspace(0, self.config.T, self.config.n_tau)
+
+        self.dc = self.c_grid[1] - self.c_grid[0]
+        self.dtau = self.tau_grid[1] - self.tau_grid[0] if len(self.tau_grid) > 1 else self.config.dt
+
+        # Create 2D meshgrid for states
+        self.C, self.TAU = np.meshgrid(self.c_grid, self.tau_grid, indexing='ij')
+
+    def compute_drift_diffusion(self, c: np.ndarray, a_L: np.ndarray, a_E: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compute drift and diffusion for given states and actions.
+
+        Args:
+            c: Cash levels (array)
+            a_L: Dividend rates (array, same length as c)
+            a_E: Equity issuance rates (array, same length as c)
+
+        Returns:
+            drift, diffusion_squared (arrays)
+        """
+        c = np.atleast_1d(c)
+        a_L = np.atleast_1d(a_L)
+        a_E = np.atleast_1d(a_E)
+
+        # Convert to torch tensors
+        c_tensor = torch.from_numpy(c).float().reshape(-1, 1)
+        a_L_tensor = torch.from_numpy(a_L).float().reshape(-1, 1)
+        a_E_tensor = torch.from_numpy(a_E).float().reshape(-1, 1)
+        action = torch.cat([a_L_tensor, a_E_tensor], dim=1)
+
+        # Create 2D state (c, τ) - τ doesn't affect drift/diffusion for c
+        tau_dummy = torch.zeros_like(c_tensor)
+        state = torch.cat([c_tensor, tau_dummy], dim=1)
+
+        with torch.no_grad():
+            drift_full = self.dynamics.drift(state, action)
+            drift_c = drift_full[:, 0].numpy()
+
+            diff_sq_full = self.dynamics.diffusion_squared(state)
+            diff_sq_c = diff_sq_full[:, 0].numpy()
+
+        return drift_c, diff_sq_c
+
+    def _build_tridiagonal_matrix(self, drift: np.ndarray, diff_sq: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Build tridiagonal matrix for the linear PDE solve.
+
+        The discretized PDE at interior points:
+        ρV_i - (V_i - V_i^{prev})/dt = reward_i + μ_i * V_c + 0.5*σ²_i * V_cc
+
+        Using central differences:
+        V_c = (V_{i+1} - V_{i-1}) / (2*dc)
+        V_cc = (V_{i+1} - 2*V_i + V_{i-1}) / dc²
+
+        Rearranging: A_lower * V_{i-1} + A_diag * V_i + A_upper * V_{i+1} = rhs
+
+        Args:
+            drift: Drift values at each cash grid point
+            diff_sq: Diffusion squared at each grid point
+
+        Returns:
+            lower, diag, upper diagonal arrays
+        """
+        n = self.config.n_c
+
+        # Diffusion coefficient
+        D = 0.5 * diff_sq / (self.dc ** 2)
+
+        # Advection coefficient (upwind scheme for stability)
+        # Split drift into positive and negative parts
+        drift_pos = np.maximum(drift, 0)
+        drift_neg = np.minimum(drift, 0)
+
+        # Upwind: use backward diff for positive drift, forward diff for negative
+        A_pos = drift_pos / self.dc  # coefficient for V_{i-1} from positive drift
+        A_neg = -drift_neg / self.dc  # coefficient for V_{i+1} from negative drift
+
+        # Time discretization coefficient
+        T_coef = 1.0 / self.dtau
+
+        # Build diagonals
+        # Lower diagonal: coefficient of V_{i-1}
+        lower = D[1:] - A_pos[1:]  # Only for i=1 to n-1
+
+        # Main diagonal: coefficient of V_i
+        diag = -(2 * D + A_pos + A_neg + self.rho + T_coef)
+
+        # Upper diagonal: coefficient of V_{i+1}
+        upper = D[:-1] + A_neg[:-1]  # Only for i=0 to n-2
+
+        return lower, diag, upper
+
+    def _solve_tridiagonal(self, lower: np.ndarray, diag: np.ndarray, upper: np.ndarray,
+                           rhs: np.ndarray) -> np.ndarray:
+        """
+        Solve tridiagonal system using Thomas algorithm.
+
+        Args:
+            lower: Sub-diagonal (length n-1)
+            diag: Main diagonal (length n)
+            upper: Super-diagonal (length n-1)
+            rhs: Right-hand side (length n)
+
+        Returns:
+            Solution vector (length n)
+        """
+        n = len(diag)
+
+        # Forward elimination
+        c_prime = np.zeros(n-1)
+        d_prime = np.zeros(n)
+
+        c_prime[0] = upper[0] / diag[0]
+        d_prime[0] = rhs[0] / diag[0]
+
+        for i in range(1, n-1):
+            denom = diag[i] - lower[i-1] * c_prime[i-1]
+            c_prime[i] = upper[i] / denom
+            d_prime[i] = (rhs[i] - lower[i-1] * d_prime[i-1]) / denom
+
+        d_prime[n-1] = (rhs[n-1] - lower[n-2] * d_prime[n-2]) / (diag[n-1] - lower[n-2] * c_prime[n-2])
+
+        # Back substitution
+        x = np.zeros(n)
+        x[n-1] = d_prime[n-1]
+
+        for i in range(n-2, -1, -1):
+            x[i] = d_prime[i] - c_prime[i] * x[i+1]
+
+        return x
+
+    def policy_evaluation(self, V_prev: np.ndarray, policy_div: np.ndarray,
+                          policy_eq: np.ndarray, j: int) -> np.ndarray:
+        """
+        Evaluate value function for fixed policy at time step j.
+
+        Given fixed policy, solve the LINEAR PDE:
+        ρV - (V - V_prev)/dt = a_L - a_E + μ(c,a)V_c + 0.5*σ²V_cc
+
+        Discretizing with implicit scheme and central differences:
+        (ρ + 1/dt)V_i - μ_i*(V_{i+1}-V_{i-1})/(2dc) - D_i*(V_{i+1}-2V_i+V_{i-1})/dc² = (a_L - a_E) + V_prev/dt
+
+        Args:
+            V_prev: Value function at previous time step (column vector)
+            policy_div: Dividend policy at this time step
+            policy_eq: Equity policy at this time step
+            j: Time index
+
+        Returns:
+            Value function at current time step
+        """
+        n = self.config.n_c
+        dc = self.dc
+        dt = self.dtau
+
+        # Get drift and diffusion for current policy
+        drift, diff_sq = self.compute_drift_diffusion(
+            self.c_grid, policy_div, policy_eq
+        )
+
+        # Diffusion coefficient D = σ²/2
+        D = 0.5 * diff_sq
+
+        # Build sparse matrix A where A @ V = b
+        # Interior equation: (ρ + 1/dt)V_i - μ_i*(V_{i+1}-V_{i-1})/(2dc) - D_i*(V_{i+1}-2V_i+V_{i-1})/dc² = rhs
+        # Rearranging:
+        # V_{i-1} * (μ_i/(2dc) - D_i/dc²) + V_i * (ρ + 1/dt + 2*D_i/dc²) + V_{i+1} * (-μ_i/(2dc) - D_i/dc²) = rhs
+
+        # Coefficients
+        a_lower = drift / (2 * dc) - D / (dc ** 2)  # coef of V_{i-1}
+        a_diag = self.rho + 1.0 / dt + 2 * D / (dc ** 2)  # coef of V_i
+        a_upper = -drift / (2 * dc) - D / (dc ** 2)  # coef of V_{i+1}
+
+        # Build sparse tridiagonal matrix
+        diagonals = [a_lower[1:], a_diag, a_upper[:-1]]
+        offsets = [-1, 0, 1]
+        A = sparse.diags(diagonals, offsets, shape=(n, n), format='csr')
+
+        # RHS: reward + V_prev/dt
+        reward = policy_div - policy_eq
+        b = reward + V_prev / dt
+
+        # Apply boundary conditions
+        # At c=0 (i=0): V = liquidation_value (Dirichlet)
+        A = A.tolil()  # Convert to lil for efficient modification
+        A[0, :] = 0
+        A[0, 0] = 1.0
+        b[0] = self.p.liquidation_value
+
+        # At c=c_max (i=n-1): Neumann dV/dc = 1
+        # Use backward difference: (V_{n-1} - V_{n-2})/dc = 1
+        # => V_{n-1} - V_{n-2} = dc
+        A[n-1, :] = 0
+        A[n-1, n-1] = 1.0
+        A[n-1, n-2] = -1.0
+        b[n-1] = dc
+
+        A = A.tocsr()
+
+        # Solve sparse system
+        V_new = spsolve(A, b)
+
+        # Clip to reasonable range
+        max_value = 100.0 * self.p.alpha / self.rho if self.rho > 0 else 1000.0
+        V_new = np.clip(V_new, 0.0, max_value)
+
+        return V_new
+
+    def policy_improvement(self, V: np.ndarray, j: int,
+                           old_dividend: np.ndarray = None,
+                           old_equity: np.ndarray = None,
+                           damping: float = 0.3) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Update policy based on current value function with damping.
+
+        Using FOC:
+        - Dividend: a_L = max if V_c < 1, else 0 (smooth approximation)
+        - Equity: a_E = max if V_c > p, else 0 (smooth approximation)
+
+        Args:
+            V: Current value function (column at time j)
+            j: Time index
+            old_dividend: Previous dividend policy (for damping)
+            old_equity: Previous equity policy (for damping)
+            damping: Blend factor (0 = no change, 1 = full update)
+
+        Returns:
+            (new_dividend_policy, new_equity_policy)
+        """
+        n = self.config.n_c
+
+        # Compute V_c using central differences with smoothing
+        V_c = np.zeros(n)
+        V_c[0] = (V[1] - V[0]) / self.dc  # Forward diff at boundary
+        V_c[-1] = (V[-1] - V[-2]) / self.dc  # Backward diff at boundary
+        V_c[1:-1] = (V[2:] - V[:-2]) / (2 * self.dc)  # Central diff interior
+
+        # Smooth V_c to reduce noise
+        V_c_smooth = V_c.copy()
+        for _ in range(3):  # Apply smoothing multiple times
+            V_c_smooth[1:-1] = 0.25 * V_c_smooth[:-2] + 0.5 * V_c_smooth[1:-1] + 0.25 * V_c_smooth[2:]
+
+        # Use linear interpolation for smooth controls instead of sigmoid
+        # This avoids the sharp transitions that cause oscillations
+
+        # Dividend: linear function of (1 - V_c) in region [0.8, 1.2]
+        # pay max if V_c < 0.8, pay 0 if V_c > 1.2, linear in between
+        div_raw = np.clip((1.2 - V_c_smooth) / 0.4, 0, 1) * self.config.dividend_max
+
+        # Equity: linear function of (V_c - p) in region [p-0.2, p+0.2]
+        # issue max if V_c > p+0.2, issue 0 if V_c < p-0.2, linear in between
+        eq_raw = np.clip((V_c_smooth - (self.p.p - 0.2)) / 0.4, 0, 1) * self.config.equity_max
+
+        # Apply damping to prevent oscillations
+        if old_dividend is not None:
+            new_dividend = (1 - damping) * old_dividend + damping * div_raw
+        else:
+            new_dividend = div_raw
+
+        if old_equity is not None:
+            new_equity = (1 - damping) * old_equity + damping * eq_raw
+        else:
+            new_equity = eq_raw
+
+        # Feasibility: can't pay more dividends than cash (in rate terms)
+        max_div_feasible = np.maximum(0, self.c_grid / self.dtau)
+        new_dividend = np.minimum(new_dividend, max_div_feasible)
+
+        return new_dividend, new_equity
+
+    def solve(self, verbose: bool = True, max_policy_iter: int = 20,
+              policy_tol: float = 1e-4) -> Dict[str, np.ndarray]:
+        """
+        Solve HJB equation using policy iteration.
+
+        Args:
+            verbose: Whether to print progress
+            max_policy_iter: Maximum policy iterations per time step
+            policy_tol: Convergence tolerance for policy
+
+        Returns:
+            Dictionary with V, policy_dividend, policy_equity, grids
+        """
+        n_c = self.config.n_c
+        n_tau = self.config.n_tau
+
+        # Initialize value function and policies
+        V = np.zeros((n_c, n_tau))
+        policy_dividend = np.zeros((n_c, n_tau))
+        policy_equity = np.zeros((n_c, n_tau))
+
+        # Terminal condition: V(c, τ=0) = c
+        V[:, 0] = self.c_grid
+
+        # Initialize policy at terminal (pay all dividends, no equity)
+        policy_dividend[:, 0] = self.config.dividend_max * np.ones(n_c)
+        policy_equity[:, 0] = np.zeros(n_c)
+
+        # Backward induction in time
+        time_indices = range(1, n_tau)
+
+        if verbose:
+            iterator = tqdm(time_indices, desc="Policy Iteration Backward",
+                          bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+        else:
+            iterator = time_indices
+
+        for j in iterator:
+            # Initialize policy from previous time step
+            policy_div = policy_dividend[:, j-1].copy()
+            policy_eq = policy_equity[:, j-1].copy()
+
+            V_prev = V[:, j-1]
+
+            # Policy iteration loop with damping
+            for pi_iter in range(max_policy_iter):
+                # Policy Evaluation: solve linear PDE for fixed policy
+                V_new = self.policy_evaluation(V_prev, policy_div, policy_eq, j)
+
+                # Policy Improvement: update policy based on new value (with damping)
+                new_div, new_eq = self.policy_improvement(
+                    V_new, j,
+                    old_dividend=policy_div,
+                    old_equity=policy_eq,
+                    damping=0.5  # Blend 50% old, 50% new
+                )
+
+                # Check convergence
+                div_change = np.max(np.abs(new_div - policy_div))
+                eq_change = np.max(np.abs(new_eq - policy_eq))
+
+                policy_div = new_div
+                policy_eq = new_eq
+
+                if max(div_change, eq_change) < policy_tol:
+                    break
+
+            # Store results
+            V[:, j] = V_new
+            policy_dividend[:, j] = policy_div
+            policy_equity[:, j] = policy_eq
+
+            # Apply boundary condition at c=0
+            V[0, j] = self.p.liquidation_value
+
+            # Smooth policies across cash dimension to reduce noise
+            for _ in range(2):
+                policy_dividend[1:-1, j] = 0.25 * policy_dividend[:-2, j] + 0.5 * policy_dividend[1:-1, j] + 0.25 * policy_dividend[2:, j]
+                policy_equity[1:-1, j] = 0.25 * policy_equity[:-2, j] + 0.5 * policy_equity[1:-1, j] + 0.25 * policy_equity[2:, j]
+
+        self.V = V
+        self.policy_dividend = policy_dividend
+        self.policy_equity = policy_equity
+
+        return {
+            'V': V,
+            'policy_dividend': policy_dividend,
+            'policy_equity': policy_equity,
+            'c_grid': self.c_grid,
+            'tau_grid': self.tau_grid,
+        }
+
+    def get_policy_at_state(self, c: float, tau: float) -> Tuple[float, float]:
+        """Get optimal policy at a given state."""
+        i = np.argmin(np.abs(self.c_grid - c))
+        j = np.argmin(np.abs(self.tau_grid - tau))
+        return self.policy_dividend[i, j], self.policy_equity[i, j]
+
+    def get_value_at_state(self, c: float, tau: float) -> float:
+        """Get value function at a given state."""
+        i = np.argmin(np.abs(self.c_grid - c))
+        j = np.argmin(np.abs(self.tau_grid - tau))
         return self.V[i, j]

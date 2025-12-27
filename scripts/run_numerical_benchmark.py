@@ -25,7 +25,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from macro_rl.dynamics.ghm_equity import GHMEquityParams, GHMEquityTimeAugmentedDynamics
-from macro_rl.solvers.numerical_vfi import NumericalVFISolver, VFIConfig
+from macro_rl.solvers.numerical_vfi import NumericalVFISolver, PolicyIterationSolver, VFIConfig
 from macro_rl.solvers.monte_carlo_evaluator import (
     MonteCarloEvaluator,
     MonteCarloConfig,
@@ -195,6 +195,11 @@ def main():
                         help='Output directory for results')
     parser.add_argument('--compare-rl', type=str, default=None,
                         help='Path to trained RL model checkpoint for comparison')
+    parser.add_argument('--solver', type=str, default='policy_iteration',
+                        choices=['vfi', 'policy_iteration'],
+                        help='Solver to use: vfi (Value Function Iteration) or policy_iteration (default)')
+    parser.add_argument('--policy-iter', type=int, default=20,
+                        help='Max policy iterations per time step (for policy_iteration solver)')
 
     args = parser.parse_args()
 
@@ -222,8 +227,8 @@ def main():
     print(f"  φ (fixed cost): {params.phi}")
     print(f"  T (horizon): {dynamics.T}")
 
-    # Setup VFI solver
-    print("\nSetting up VFI solver...")
+    # Setup solver
+    print(f"\nSetting up {args.solver} solver...")
 
     # Use economically reasonable action bounds
     # Dividend rate should be ~ α (sustainable cash flow rate)
@@ -235,7 +240,7 @@ def main():
     print(f"  dividend_max: {reasonable_dividend_max:.3f} (vs config: {config['action_space']['dividend_max']:.1f})")
     print(f"  equity_max: {reasonable_equity_max:.3f} (vs config: {config['action_space']['equity_max']:.1f})")
 
-    vfi_config = VFIConfig(
+    solver_config = VFIConfig(
         n_c=args.n_c,
         n_tau=args.n_tau,
         c_max=params.c_max,
@@ -248,20 +253,29 @@ def main():
         equity_max=reasonable_equity_max,
     )
 
-    vfi_solver = NumericalVFISolver(dynamics, vfi_config)
+    # Choose solver
+    if args.solver == 'policy_iteration':
+        solver = PolicyIterationSolver(dynamics, solver_config)
+        solver_name = "Policy Iteration"
+    else:
+        solver = NumericalVFISolver(dynamics, solver_config)
+        solver_name = "Value Function Iteration"
 
     # Solve HJB equation
-    print("\nSolving HJB equation using Value Function Iteration...")
+    print(f"\nSolving HJB equation using {solver_name}...")
     print(f"Grid: {args.n_c} × {args.n_tau} states")
-    print(f"Action grid: {args.n_dividend} × {args.n_equity} actions")
-    print(f"Total evaluations: ~{args.n_c * args.n_tau * args.n_dividend * args.n_equity:,}")
+    if args.solver == 'vfi':
+        print(f"Action grid: {args.n_dividend} × {args.n_equity} actions")
+        print(f"Total evaluations: ~{args.n_c * args.n_tau * args.n_dividend * args.n_equity:,}")
+        results = solver.solve(verbose=True)
+    else:
+        print(f"Max policy iterations per time step: {args.policy_iter}")
+        results = solver.solve(verbose=True, max_policy_iter=args.policy_iter)
 
-    results = vfi_solver.solve(verbose=True)
-
-    print("\nVFI Solution complete!")
-    print(f"Value function range: [{vfi_solver.V.min():.3f}, {vfi_solver.V.max():.3f}]")
-    print(f"Dividend policy range: [{vfi_solver.policy_dividend.min():.3f}, {vfi_solver.policy_dividend.max():.3f}]")
-    print(f"Equity policy range: [{vfi_solver.policy_equity.min():.3f}, {vfi_solver.policy_equity.max():.3f}]")
+    print(f"\n{solver_name} Solution complete!")
+    print(f"Value function range: [{solver.V.min():.3f}, {solver.V.max():.3f}]")
+    print(f"Dividend policy range: [{solver.policy_dividend.min():.3f}, {solver.policy_dividend.max():.3f}]")
+    print(f"Equity policy range: [{solver.policy_equity.min():.3f}, {solver.policy_equity.max():.3f}]")
 
     # Compute Monte Carlo realized value function if requested
     mc_results = None
@@ -273,7 +287,7 @@ def main():
             T=config['training']['T'],
         )
         mc_evaluator = MonteCarloEvaluator(dynamics, mc_config)
-        policy_wrapper = NumericalPolicyWrapper(vfi_solver)
+        policy_wrapper = NumericalPolicyWrapper(solver)
 
         mc_results = mc_evaluator.compute_realized_value_function(
             policy_wrapper,
@@ -288,20 +302,22 @@ def main():
     # Visualize results
     print("\nGenerating visualizations...")
     fig = visualize_numerical_solution(
-        vfi_solver,
+        solver,
         mc_results=mc_results,
-        save_path=output_dir / 'numerical_benchmark.png'
+        save_path=output_dir / 'numerical_benchmark.png',
+        title_suffix=f" ({solver_name})"
     )
 
     # Save numerical results
     print("\nSaving numerical results...")
     np.savez(
-        output_dir / 'vfi_solution.npz',
-        V=vfi_solver.V,
-        policy_dividend=vfi_solver.policy_dividend,
-        policy_equity=vfi_solver.policy_equity,
-        c_grid=vfi_solver.c_grid,
-        tau_grid=vfi_solver.tau_grid,
+        output_dir / 'numerical_solution.npz',
+        V=solver.V,
+        policy_dividend=solver.policy_dividend,
+        policy_equity=solver.policy_equity,
+        c_grid=solver.c_grid,
+        tau_grid=solver.tau_grid,
+        solver_type=args.solver,
     )
 
     if mc_results:
