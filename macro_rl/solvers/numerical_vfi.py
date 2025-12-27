@@ -303,16 +303,17 @@ class NumericalVFISolver:
         V = self.apply_boundary_conditions(V, 0)
 
         # Backward induction in time
-        n_time_steps = int(self.config.T / self.dtau)
-        time_indices = np.arange(n_time_steps + 1)
+        # Iterate over tau grid indices (from 1 to n_tau-1)
+        # tau grid has n_tau points indexed 0 to n_tau-1
+        time_indices = range(1, self.config.n_tau)
 
         if verbose:
-            iterator = tqdm(time_indices[1:], desc="VFI Backward Induction",
+            iterator = tqdm(time_indices, desc="VFI Backward Induction",
                           bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
         else:
-            iterator = time_indices[1:]
+            iterator = time_indices
 
-        for j_idx, j in enumerate(iterator, start=1):
+        for j in iterator:
             # Single pass per time step (standard backward induction)
             # Update value function at each cash level
             for i in range(self.config.n_c):
