@@ -35,17 +35,17 @@ dynamics:
 action_space:
   # Dividend bounds
   dividend_min: 0.0
-  dividend_max: 10.0
+  dividend_max: 20.0
 
   # Equity issuance bounds
   equity_min: 0.0
-  equity_max: 0.5
+  equity_max: 4.0
 
   # Control spec parameters
-  a_L_max: 10.0
-  a_E_max: 0.5
+  a_L_max: 20.0
+  a_E_max: 4.0
   issuance_threshold: 0.05
-  issuance_cost: 0.0
+  issuance_cost: 0.002
 
 # ============================================================================
 # ENVIRONMENT
@@ -64,11 +64,11 @@ network:
   shared_layers: 0             # Number of shared layers (0=no sharing)
 
   # Policy network (for Monte Carlo)
-  policy_hidden: [256, 256, 128]
+  policy_hidden: [64, 64, 32]
   policy_activation: relu
 
   # Value network (baseline)
-  value_hidden: [256, 256, 128]
+  value_hidden: [64, 64, 32]
   value_activation: relu
 
   # Policy parameters
@@ -99,8 +99,8 @@ training:
   use_sparse_rewards: true  # Use trajectory-level returns for critic training
 
   # Training iterations
-  n_iterations: 500     # Shorter test run
-  n_trajectories: 512   # Increased from 256 to compensate for higher variance without baseline
+  n_iterations: 5100     # Shorter test run
+  n_trajectories: 2048   # Increased from 256 to compensate for higher variance without baseline
 
   # Learning rates
   lr_policy: 0.0003     # 3e-4
