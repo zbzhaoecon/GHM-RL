@@ -8,9 +8,11 @@ This module provides evaluation functions for different solver types:
 
 Separated from training scripts for better modularity and reusability.
 
-IMPORTANT: Evaluation always uses GROUND TRUTH dense rewards (step-by-step)
-regardless of training configuration (sparse/dense). This ensures consistent
-and comparable evaluation across different training methods.
+IMPORTANT: Evaluation always uses GROUND TRUTH sparse rewards (trajectory-level)
+regardless of training configuration. This ensures consistent and comparable
+evaluation across different training methods. Sparse rewards are preferred
+because they compute the objective directly from actions without intermediate
+step reward calculations, providing more accurate and numerically stable results.
 """
 
 import torch
@@ -47,8 +49,10 @@ def evaluate_monte_carlo_policy(
     """
     Evaluate Monte Carlo policy on deterministic rollouts.
 
-    IMPORTANT: Uses GROUND TRUTH dense rewards for evaluation, regardless of
+    IMPORTANT: Uses GROUND TRUTH sparse rewards for evaluation, regardless of
     training configuration. This ensures consistent evaluation across methods.
+    Sparse rewards compute the objective directly from actions for better
+    numerical accuracy.
 
     Args:
         solver: MonteCarloPolicyGradient solver
@@ -81,14 +85,14 @@ def evaluate_monte_carlo_policy(
     else:
         raise ValueError(f"Unsupported state dimension: {state_space.dim}")
 
-    # Create GROUND TRUTH evaluation simulator (always use dense rewards)
+    # Create GROUND TRUTH evaluation simulator (always use sparse rewards)
     eval_simulator = TrajectorySimulator(
         dynamics=solver.simulator.dynamics,
         control_spec=solver.simulator.control_spec,
         reward_fn=solver.simulator.reward_fn,
         dt=solver.simulator.dt,
         T=solver.simulator.T,
-        use_sparse_rewards=False,  # ALWAYS use dense rewards for ground truth evaluation
+        use_sparse_rewards=True,  # ALWAYS use sparse rewards for ground truth evaluation
     )
 
     # Create deterministic policy wrapper
@@ -133,8 +137,10 @@ def evaluate_actor_critic_policy(
     """
     Evaluate Actor-Critic policy.
 
-    IMPORTANT: Uses GROUND TRUTH dense rewards for evaluation, regardless of
+    IMPORTANT: Uses GROUND TRUTH sparse rewards for evaluation, regardless of
     training configuration. This ensures consistent evaluation across methods.
+    Sparse rewards compute the objective directly from actions for better
+    numerical accuracy.
 
     Args:
         solver: ModelBasedActorCritic solver
@@ -162,14 +168,14 @@ def evaluate_actor_critic_policy(
     else:
         raise ValueError(f"Unsupported state dimension: {state_space.dim}")
 
-    # Create GROUND TRUTH evaluation simulator (always use dense rewards)
+    # Create GROUND TRUTH evaluation simulator (always use sparse rewards)
     eval_simulator = TrajectorySimulator(
         dynamics=solver.dynamics,
         control_spec=solver.control_spec,
         reward_fn=solver.reward_fn,
         dt=solver.dt,
         T=solver.T,
-        use_sparse_rewards=False,  # ALWAYS use dense rewards for ground truth evaluation
+        use_sparse_rewards=True,  # ALWAYS use sparse rewards for ground truth evaluation
     )
 
     # Create deterministic policy wrapper
