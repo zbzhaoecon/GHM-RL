@@ -380,6 +380,12 @@ class TrajectorySimulator:
         discounts = torch.exp(-discount_rate * time_indices * self.dt)
 
         # Compute discounted sum of net payouts directly from actions
+        # DIAGNOSTIC: Track actual actions for debugging
+        total_dividends = 0.0
+        total_equity = 0.0
+        total_rewards = 0.0
+        active_steps = 0
+
         for t in range(n_steps):
             # Net payout at time t: dividends - equity dilution cost - fixed cost
             # Cost of raising a_E is (p-1)*a_E where p is proportional cost parameter
@@ -393,8 +399,31 @@ class TrajectorySimulator:
 
             net_payout = a_L * self.dt - self.reward_fn.issuance_cost * a_E - fixed_cost_penalty
 
+            # DIAGNOSTIC: Accumulate totals
+            active_mask = masks[:, t]
+            total_dividends += (a_L * active_mask).sum().item()
+            total_equity += (a_E * active_mask).sum().item()
+            total_rewards += (net_payout * active_mask).sum().item()
+            active_steps += active_mask.sum().item()
+
             # Add discounted net payout (only if trajectory was active)
             returns = returns + discounts[t] * net_payout * masks[:, t]
+
+        # DIAGNOSTIC: Print statistics every 100 calls
+        if not hasattr(self, '_sparse_call_count'):
+            self._sparse_call_count = 0
+        self._sparse_call_count += 1
+        if self._sparse_call_count % 100 == 0:
+            avg_dividend = total_dividends / max(active_steps, 1)
+            avg_equity = total_equity / max(active_steps, 1)
+            avg_reward = total_rewards / max(active_steps, 1)
+            print(f"\n[DIAGNOSTIC] Sparse rewards (call {self._sparse_call_count}):")
+            print(f"  Avg dividend/step: {avg_dividend:.4f}")
+            print(f"  Avg equity/step: {avg_equity:.4f}")
+            print(f"  Avg reward/step: {avg_reward:.4f}")
+            print(f"  Issuance cost param: {self.reward_fn.issuance_cost:.4f}")
+            print(f"  Avg return: {returns.mean().item():.4f}")
+
 
         # Add discounted terminal reward
         termination_times = masks.sum(dim=1)
