@@ -42,7 +42,7 @@ class VFIConfig:
     tolerance: float = 1e-6         # Convergence tolerance (not used in current implementation)
 
     # Finite difference scheme
-    upwind_scheme: bool = False     # Use upwind scheme for drift (slower but more stable)
+    upwind_scheme: bool = True      # Use upwind scheme for drift (slower but more stable)
 
 
 class NumericalVFISolver:
@@ -206,59 +206,76 @@ class NumericalVFISolver:
             else:
                 return (V[i+1, j] - V[i, j]) / self.dc
 
-    def optimize_action(self, c: float, V: np.ndarray, i: int, j: int) -> Tuple[float, float, float]:
+    def optimize_action(self, c: float, V: np.ndarray, i: int, j: int, j_deriv: int = None) -> Tuple[float, float, float]:
         """
         Optimize over actions at a given state to solve Bellman equation.
 
-        Vectorized version for speed.
+        Uses first-order conditions (FOC) for bang-bang optimal controls:
+        - Dividends: ∂rhs/∂a_L = 1 - V_c → pay max if V_c < 1, else pay 0
+        - Equity: ∂rhs/∂a_E = -1 + V_c/p → issue max if V_c > p, else issue 0
 
         Args:
             c: Cash level
             V: Current value function
             i: Cash index
-            j: Time index
+            j: Time index (current time step being computed)
+            j_deriv: Time index to use for derivatives (default: j-1 for semi-implicit scheme)
+                     This should be the previous time step where V is already computed.
 
         Returns:
             Optimal (dividend, equity, value)
         """
+        # Use previous time step for derivatives (semi-implicit scheme)
+        # V[:, j] hasn't been computed yet, so we must use V[:, j-1] or V[:, j_deriv]
+        if j_deriv is None:
+            j_deriv = max(0, j - 1)
+
         # Get spatial derivatives only (V_c, V_cc)
-        # V_tau is handled implicitly by time-stepping scheme
-        V_c, V_cc, _ = self.compute_derivatives(V, i, j)
+        V_c, V_cc, _ = self.compute_derivatives(V, i, j_deriv)
 
-        # Create action grid (vectorized)
-        n_actions = len(self.dividend_grid) * len(self.equity_grid)
-        dividend_actions = np.repeat(self.dividend_grid, len(self.equity_grid))
-        equity_actions = np.tile(self.equity_grid, len(self.dividend_grid))
+        # Use FOC with smooth approximation to avoid chattering
+        # Dividend FOC: ∂rhs/∂a_L = 1 - V_c
+        # - If V_c < 1: marginal value of cash is low, pay dividends
+        # - If V_c > 1: marginal value of cash is high, hold cash
+        # Use smooth sigmoid: a_L = max * sigmoid((1 - V_c) / smoothing)
+        smoothing = 0.2  # Controls transition sharpness (larger = smoother)
+        dividend_signal = np.clip((1.0 - V_c) / smoothing, -20, 20)  # Clip to avoid overflow
+        opt_dividend = self.config.dividend_max / (1.0 + np.exp(-dividend_signal))
 
-        # Compute drift and diffusion for all actions at once
-        c_array = np.full(n_actions, c)
-        drifts, diff_sqs = self.compute_drift_diffusion(c_array, dividend_actions, equity_actions)
+        # Equity FOC: ∂rhs/∂a_E = -1 + V_c/p
+        # - If V_c > p: marginal value of cash exceeds issuance cost, issue equity
+        # - If V_c < p: issuance too costly, don't issue
+        # Use smooth sigmoid: a_E = max * sigmoid((V_c - p) / smoothing)
+        equity_signal = np.clip((V_c - self.p.p) / smoothing, -20, 20)  # Clip to avoid overflow
+        opt_equity = self.config.equity_max / (1.0 + np.exp(-equity_signal))
 
-        # Compute V_c for all actions (upwind if needed)
+        # Constraint: can't pay more dividends than available cash (rate constraint)
+        # For continuous time, this is approximately c/dt, but for stability use c
+        max_dividend_feasible = max(0.0, c / self.dtau) if self.dtau > 0 else self.config.dividend_max
+        opt_dividend = min(opt_dividend, max_dividend_feasible)
+
+        # Compute drift and diffusion for optimal action
+        drift, diff_sq = self.compute_drift_diffusion(
+            np.array([c]), np.array([opt_dividend]), np.array([opt_equity])
+        )
+        drift = drift[0]
+        diff_sq = diff_sq[0]
+
+        # Compute V_c with upwind scheme if enabled
         if self.config.upwind_scheme:
-            # Vectorized upwind scheme
-            V_forward = (V[min(i+1, self.config.n_c-1), j] - V[i, j]) / self.dc
-            V_backward = (V[i, j] - V[max(i-1, 0), j]) / self.dc
-            V_c_array = np.where(drifts > 0, V_forward, V_backward)
+            if drift > 0:
+                V_c_upwind = (V[min(i+1, self.config.n_c-1), j_deriv] - V[i, j_deriv]) / self.dc
+            else:
+                V_c_upwind = (V[i, j_deriv] - V[max(i-1, 0), j_deriv]) / self.dc
         else:
-            V_c_array = np.full(n_actions, V_c)
+            V_c_upwind = V_c
 
-        # Vectorized reward computation
-        # reward = a_L - a_E (dividends minus dilution)
-        # Note: Fixed cost φ is already included in drift calculation
-        rewards = dividend_actions - equity_actions
+        # Compute HJB RHS
+        # reward = a_L - a_E (dividends minus dilution cost)
+        reward = opt_dividend - opt_equity
+        rhs = reward + drift * V_c_upwind + 0.5 * diff_sq * V_cc
 
-        # Vectorized HJB RHS
-        # rhs = instantaneous_reward + drift·V_c + 0.5·σ²·V_cc
-        rhs_values = rewards + drifts * V_c_array + 0.5 * diff_sqs * V_cc
-
-        # Find best action
-        best_idx = np.argmax(rhs_values)
-        best_dividend = dividend_actions[best_idx]
-        best_equity = equity_actions[best_idx]
-        best_value = rhs_values[best_idx]
-
-        return best_dividend, best_equity, best_value
+        return opt_dividend, opt_equity, rhs
 
     def apply_boundary_conditions(self, V: np.ndarray, j: int) -> np.ndarray:
         """
@@ -281,9 +298,10 @@ class NumericalVFISolver:
         # Natural boundary - no additional constraint needed
 
         # Time boundary (τ = 0): Terminal condition
-        # At end of horizon, liquidate for terminal value
+        # At end of horizon, shareholders receive remaining cash as final dividend
+        # V(c, τ=0) = c (not 0, because cash can be paid out immediately)
         if j == 0:
-            V_new[:, 0] = self.p.liquidation_value
+            V_new[:, 0] = self.c_grid  # Terminal value equals cash holdings
 
         return V_new
 
@@ -335,18 +353,27 @@ class NumericalVFISolver:
                     V_prev_time = V[i, j-1]  # Value at previous time
                     V[i, j] = (V_prev_time / self.dtau + rhs) / (self.rho + 1.0 / self.dtau)
 
-                    # Clip to prevent overflow (value should be bounded)
+                    # Clip to prevent overflow and ensure non-negativity
+                    # Value should be non-negative (equity can't have negative value)
                     # Max reasonable value: firm value with infinite dividends
                     max_value = 100.0 * self.p.alpha / self.rho if self.rho > 0 else 1000.0
-                    V[i, j] = np.clip(V[i, j], -max_value, max_value)
+                    V[i, j] = np.clip(V[i, j], 0.0, max_value)
                 else:
-                    # At τ=0, use terminal condition
-                    V[i, j] = self.p.liquidation_value
+                    # At τ=0, terminal value equals cash (can be paid as final dividend)
+                    V[i, j] = self.c_grid[i]
 
                 policy_dividend[i, j] = opt_dividend
                 policy_equity[i, j] = opt_equity
 
             # Apply boundary conditions
+            V = self.apply_boundary_conditions(V, j)
+
+            # Apply light smoothing to reduce oscillations (moving average in c direction)
+            # Skip boundaries
+            for i_smooth in range(1, self.config.n_c - 1):
+                V[i_smooth, j] = 0.25 * V[i_smooth-1, j] + 0.5 * V[i_smooth, j] + 0.25 * V[i_smooth+1, j]
+
+            # Re-apply boundary conditions after smoothing
             V = self.apply_boundary_conditions(V, j)
 
         self.V = V
