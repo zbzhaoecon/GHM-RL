@@ -136,10 +136,11 @@ solver:
 # REWARD FUNCTION
 # ============================================================================
 reward:
-  discount_rate: null    # Use r - mu
-  issuance_cost: 0.06    # p - 1 = 1.06 - 1 (proportional cost, approximates (p-1)/p for p≈1)
-  liquidation_rate: 0.0  # Set to 0 (equity holders get nothing)
-  liquidation_flow: 0.0  # No liquidation value
+  discount_rate: null    # Use r - mu = 0.03 - 0.01 = 0.02
+  issuance_cost: 1.0     # Full dilution cost (deprecated but kept for compatibility)
+  liquidation_rate: 0.55 # ω = recovery rate at bankruptcy
+  liquidation_flow: 0.18 # α = expected cash flow rate
+  # liquidation_value = ω·α/(r-μ) = 0.55 × 0.18 / 0.02 = 4.95
   fixed_cost: 0.002      # φ = 0.002 (fixed cost per equity issuance)
 
 # ============================================================================
