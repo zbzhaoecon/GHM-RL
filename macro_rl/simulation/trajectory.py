@@ -194,6 +194,16 @@ class TrajectorySimulator:
         """
         import math
 
+        # DIAGNOSTIC: Print on every rollout call
+        if not hasattr(self, '_rollout_call_count'):
+            self._rollout_call_count = 0
+        self._rollout_call_count += 1
+        if self._rollout_call_count <= 3:
+            print(f"\n[DIAGNOSTIC ROLLOUT] Call {self._rollout_call_count}:")
+            print(f"  use_sparse_rewards: {self.use_sparse_rewards}")
+            print(f"  batch_size: {initial_states.shape[0]}")
+            print(f"  max_steps: {self.max_steps}")
+
         batch_size, state_dim = initial_states.shape
         action_dim = self.control_spec.dim
         device = initial_states.device
@@ -283,6 +293,11 @@ class TrajectorySimulator:
 
         # Compute discounted returns
         discount_rate = self.dynamics.discount_rate()
+
+        # DIAGNOSTIC: Show which path is taken
+        if self._rollout_call_count <= 3:
+            print(f"  → Computing returns: {'SPARSE' if self.use_sparse_rewards else 'DENSE'}")
+
         if self.use_sparse_rewards:
             returns = self._compute_sparse_returns(states, actions, terminal_rewards, masks, discount_rate)
         else:
