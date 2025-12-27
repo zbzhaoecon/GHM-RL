@@ -224,6 +224,17 @@ def main():
 
     # Setup VFI solver
     print("\nSetting up VFI solver...")
+
+    # Use economically reasonable action bounds
+    # Dividend rate should be ~ α (sustainable cash flow rate)
+    # Equity issuance should be modest (enough to prevent bankruptcy)
+    reasonable_dividend_max = min(2.0 * params.alpha, 1.0)  # At most 2x sustainable rate
+    reasonable_equity_max = 0.5  # Modest issuance rate
+
+    print(f"\nAction bounds (economically reasonable):")
+    print(f"  dividend_max: {reasonable_dividend_max:.3f} (vs config: {config['action_space']['dividend_max']:.1f})")
+    print(f"  equity_max: {reasonable_equity_max:.3f} (vs config: {config['action_space']['equity_max']:.1f})")
+
     vfi_config = VFIConfig(
         n_c=args.n_c,
         n_tau=args.n_tau,
@@ -233,8 +244,8 @@ def main():
         dt=config['training']['dt'],
         T=config['training']['T'],
         tolerance=args.tolerance,
-        dividend_max=config['action_space']['dividend_max'],
-        equity_max=config['action_space']['equity_max'],
+        dividend_max=reasonable_dividend_max,
+        equity_max=reasonable_equity_max,
     )
 
     vfi_solver = NumericalVFISolver(dynamics, vfi_config)

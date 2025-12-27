@@ -30,11 +30,11 @@ class VFIConfig:
     # Action grid parameters
     n_dividend: int = 30            # Number of dividend grid points (20-50 recommended)
     n_equity: int = 20              # Number of equity issuance grid points (15-30 recommended)
-    dividend_max: float = 20.0      # Maximum dividend
-    equity_max: float = 4.0         # Maximum equity issuance
+    dividend_max: float = 1.0       # Maximum dividend rate (should be ~ α, not >> α!)
+    equity_max: float = 0.5         # Maximum equity issuance rate
 
     # Numerical parameters
-    dt: float = 0.1                 # Time step
+    dt: float = 0.1                 # Time step (not used - actual dt computed from grid)
     T: float = 10.0                 # Time horizon
 
     # Convergence parameters
