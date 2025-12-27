@@ -409,20 +409,26 @@ class TrajectorySimulator:
             # Add discounted net payout (only if trajectory was active)
             returns = returns + discounts[t] * net_payout * masks[:, t]
 
-        # DIAGNOSTIC: Print statistics every 100 calls
-        if not hasattr(self, '_sparse_call_count'):
-            self._sparse_call_count = 0
-        self._sparse_call_count += 1
-        if self._sparse_call_count % 100 == 0:
-            avg_dividend = total_dividends / max(active_steps, 1)
-            avg_equity = total_equity / max(active_steps, 1)
-            avg_reward = total_rewards / max(active_steps, 1)
-            print(f"\n[DIAGNOSTIC] Sparse rewards (call {self._sparse_call_count}):")
-            print(f"  Avg dividend/step: {avg_dividend:.4f}")
-            print(f"  Avg equity/step: {avg_equity:.4f}")
-            print(f"  Avg reward/step: {avg_reward:.4f}")
-            print(f"  Issuance cost param: {self.reward_fn.issuance_cost:.4f}")
-            print(f"  Avg return: {returns.mean().item():.4f}")
+        # DIAGNOSTIC: Print statistics
+        if active_steps > 0:
+            avg_dividend = total_dividends / active_steps
+            avg_equity = total_equity / active_steps
+            avg_reward = total_rewards / active_steps
+            avg_return = returns.mean().item()
+
+            # Print first 5 calls to diagnose the issue
+            if not hasattr(self, '_sparse_call_count'):
+                self._sparse_call_count = 0
+            self._sparse_call_count += 1
+
+            if self._sparse_call_count <= 5:
+                print(f"\n[DIAGNOSTIC SPARSE] Call {self._sparse_call_count}:")
+                print(f"  Batch size: {batch_size}, Active steps: {active_steps}")
+                print(f"  Avg dividend/step: {avg_dividend:.4f}")
+                print(f"  Avg equity/step: {avg_equity:.4f}")
+                print(f"  Avg reward/step: {avg_reward:.4f}")
+                print(f"  Issuance cost: {self.reward_fn.issuance_cost:.4f}")
+                print(f"  Avg return: {avg_return:.4f}")
 
 
         # Add discounted terminal reward
