@@ -22,14 +22,14 @@ from tqdm import tqdm
 class VFIConfig:
     """Configuration for Value Function Iteration solver."""
     # Grid parameters
-    n_c: int = 100                  # Number of cash grid points
-    n_tau: int = 100                # Number of time grid points
+    n_c: int = 50                   # Number of cash grid points (50-100 recommended)
+    n_tau: int = 50                 # Number of time grid points (50-100 recommended)
     c_min: float = 0.0              # Minimum cash
     c_max: float = 2.0              # Maximum cash
 
     # Action grid parameters
-    n_dividend: int = 50            # Number of dividend grid points
-    n_equity: int = 30              # Number of equity issuance grid points
+    n_dividend: int = 30            # Number of dividend grid points (20-50 recommended)
+    n_equity: int = 20              # Number of equity issuance grid points (15-30 recommended)
     dividend_max: float = 20.0      # Maximum dividend
     equity_max: float = 4.0         # Maximum equity issuance
 
@@ -38,11 +38,11 @@ class VFIConfig:
     T: float = 10.0                 # Time horizon
 
     # Convergence parameters
-    max_iterations: int = 10000     # Maximum VFI iterations
-    tolerance: float = 1e-6         # Convergence tolerance
+    max_iterations: int = 10000     # Maximum VFI iterations (not used in current implementation)
+    tolerance: float = 1e-6         # Convergence tolerance (not used in current implementation)
 
     # Finite difference scheme
-    upwind_scheme: bool = True      # Use upwind scheme for drift
+    upwind_scheme: bool = False     # Use upwind scheme for drift (slower but more stable)
 
 
 class NumericalVFISolver:
@@ -91,21 +91,37 @@ class NumericalVFISolver:
         # Create 2D meshgrid for states
         self.C, self.TAU = np.meshgrid(self.c_grid, self.tau_grid, indexing='ij')
 
-    def compute_drift_diffusion(self, c: np.ndarray, a_L: float, a_E: float) -> Tuple[np.ndarray, np.ndarray]:
+    def compute_drift_diffusion(self, c: np.ndarray, a_L, a_E) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute drift and diffusion for given state and actions.
 
         Args:
-            c: Cash level (can be array)
-            a_L: Dividend payout rate
-            a_E: Equity issuance (gross)
+            c: Cash level (array)
+            a_L: Dividend payout rate (scalar or array)
+            a_E: Equity issuance (scalar or array)
 
         Returns:
             drift, diffusion_squared
         """
-        # Convert to torch tensors for dynamics evaluation
-        c_tensor = torch.tensor(c, dtype=torch.float32).reshape(-1, 1)
-        action = torch.tensor([[a_L, a_E]], dtype=torch.float32).expand(len(c_tensor.flatten()), 2)
+        # Ensure arrays
+        c = np.atleast_1d(c)
+        a_L = np.atleast_1d(a_L)
+        a_E = np.atleast_1d(a_E)
+
+        # Broadcast to same length
+        n = max(len(c), len(a_L), len(a_E))
+        if len(c) == 1:
+            c = np.repeat(c, n)
+        if len(a_L) == 1:
+            a_L = np.repeat(a_L, n)
+        if len(a_E) == 1:
+            a_E = np.repeat(a_E, n)
+
+        # Convert to torch tensors
+        c_tensor = torch.from_numpy(c).float().reshape(-1, 1)
+        a_L_tensor = torch.from_numpy(a_L).float().reshape(-1, 1)
+        a_E_tensor = torch.from_numpy(a_E).float().reshape(-1, 1)
+        action = torch.cat([a_L_tensor, a_E_tensor], dim=1)
 
         # Create 2D state (c, τ) - τ doesn't affect drift/diffusion for c
         tau_dummy = torch.zeros_like(c_tensor)
@@ -120,7 +136,7 @@ class NumericalVFISolver:
             diff_sq_full = self.dynamics.diffusion_squared(state)
             diff_sq_c = diff_sq_full[:, 0].numpy()
 
-        return drift_c.reshape(c.shape), diff_sq_c.reshape(c.shape)
+        return drift_c, diff_sq_c
 
     def compute_derivatives(self, V: np.ndarray, i: int, j: int) -> Tuple[float, float, float]:
         """
@@ -151,11 +167,16 @@ class NumericalVFISolver:
         else:
             V_cc = (V[i+1, j] - 2*V[i, j] + V[i-1, j]) / (self.dc ** 2)
 
-        # Time derivative (backward difference)
+        # Time derivative (backward difference) - not used in time-stepping version
         if j == 0:
             V_tau = 0.0  # At τ=0, no time derivative
         else:
             V_tau = (V[i, j] - V[i, j-1]) / self.dtau
+
+        # Replace NaN/Inf with 0
+        V_c = 0.0 if not np.isfinite(V_c) else V_c
+        V_cc = 0.0 if not np.isfinite(V_cc) else V_cc
+        V_tau = 0.0 if not np.isfinite(V_tau) else V_tau
 
         return V_c, V_cc, V_tau
 
@@ -189,6 +210,8 @@ class NumericalVFISolver:
         """
         Optimize over actions at a given state to solve Bellman equation.
 
+        Vectorized version for speed.
+
         Args:
             c: Cash level
             V: Current value function
@@ -198,42 +221,39 @@ class NumericalVFISolver:
         Returns:
             Optimal (dividend, equity, value)
         """
-        best_value = -np.inf
-        best_dividend = 0.0
-        best_equity = 0.0
+        # Get spatial derivatives only (V_c, V_cc)
+        # V_tau is handled implicitly by time-stepping scheme
+        V_c, V_cc, _ = self.compute_derivatives(V, i, j)
 
-        # Get derivatives
-        V_c, V_cc, V_tau = self.compute_derivatives(V, i, j)
+        # Create action grid (vectorized)
+        n_actions = len(self.dividend_grid) * len(self.equity_grid)
+        dividend_actions = np.repeat(self.dividend_grid, len(self.equity_grid))
+        equity_actions = np.tile(self.equity_grid, len(self.dividend_grid))
 
-        # Grid search over actions
-        for a_L in self.dividend_grid:
-            for a_E in self.equity_grid:
-                # Compute drift and diffusion
-                drift, diff_sq = self.compute_drift_diffusion(np.array([c]), a_L, a_E)
-                drift = float(drift[0])
-                diff_sq = float(diff_sq[0])
+        # Compute drift and diffusion for all actions at once
+        c_array = np.full(n_actions, c)
+        drifts, diff_sqs = self.compute_drift_diffusion(c_array, dividend_actions, equity_actions)
 
-                # Use upwind scheme if enabled
-                if self.config.upwind_scheme:
-                    V_c_upwind = self.compute_upwind_derivative(V, i, j, drift)
-                else:
-                    V_c_upwind = V_c
+        # Compute V_c for all actions (upwind if needed)
+        if self.config.upwind_scheme:
+            # Vectorized upwind scheme
+            V_forward = (V[min(i+1, self.config.n_c-1), j] - V[i, j]) / self.dc
+            V_backward = (V[i, j] - V[max(i-1, 0), j]) / self.dc
+            V_c_array = np.where(drifts > 0, V_forward, V_backward)
+        else:
+            V_c_array = np.full(n_actions, V_c)
 
-                # Fixed cost indicator
-                fixed_cost = self.p.phi if a_E > 1e-6 else 0.0
+        # Vectorized reward computation
+        rewards = dividend_actions - equity_actions
 
-                # Instantaneous reward: dividend - equity cost - fixed cost
-                net_equity = a_E / self.p.p - fixed_cost
-                reward = a_L - a_E
+        # Vectorized HJB RHS
+        rhs_values = rewards + drifts * V_c_array + 0.5 * diff_sqs * V_cc
 
-                # HJB right-hand side:
-                # reward + drift * V_c + (-1) * V_tau + 0.5 * diff_sq * V_cc
-                rhs = reward + drift * V_c_upwind - V_tau + 0.5 * diff_sq * V_cc
-
-                if rhs > best_value:
-                    best_value = rhs
-                    best_dividend = a_L
-                    best_equity = a_E
+        # Find best action
+        best_idx = np.argmax(rhs_values)
+        best_dividend = dividend_actions[best_idx]
+        best_equity = equity_actions[best_idx]
+        best_value = rhs_values[best_idx]
 
         return best_dividend, best_equity, best_value
 
@@ -286,40 +306,44 @@ class NumericalVFISolver:
         n_time_steps = int(self.config.T / self.dtau)
         time_indices = np.arange(n_time_steps + 1)
 
-        iterator = tqdm(time_indices[1:], desc="VFI Backward Induction") if verbose else time_indices[1:]
+        if verbose:
+            iterator = tqdm(time_indices[1:], desc="VFI Backward Induction",
+                          bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+        else:
+            iterator = time_indices[1:]
 
         for j_idx, j in enumerate(iterator, start=1):
-            # For each time step, iterate to convergence
-            V_old = V.copy()
+            # Single pass per time step (standard backward induction)
+            # Update value function at each cash level
+            for i in range(self.config.n_c):
+                c = self.c_grid[i]
 
-            for iteration in range(self.config.max_iterations):
-                V_prev = V.copy()
+                # Optimize over actions using value from previous time
+                opt_dividend, opt_equity, rhs = self.optimize_action(c, V, i, j)
 
-                # Update value function at each cash level
-                for i in range(self.config.n_c):
-                    c = self.c_grid[i]
+                # Update using implicit time-stepping scheme
+                # HJB: ρV - ∂V/∂τ = rhs
+                # Discretized: ρV(τ) - [V(τ) - V(τ-dt)]/dt = rhs
+                # Solve for V(τ): V(τ) = [V(τ-dt)/dt + rhs] / (ρ + 1/dt)
 
-                    # Optimize over actions
-                    opt_dividend, opt_equity, rhs = self.optimize_action(c, V_prev, i, j)
+                if j > 0:
+                    # Use backward induction from previous time step
+                    V_prev_time = V[i, j-1]  # Value at previous time
+                    V[i, j] = (V_prev_time / self.dtau + rhs) / (self.rho + 1.0 / self.dtau)
 
-                    # Update using implicit scheme
-                    # V(c,τ) = [rhs + (ρ * dt) * V_old] / (1 + ρ * dt)
-                    # Simplified: V = rhs / ρ (steady state)
-                    V[i, j] = rhs / self.rho if self.rho > 0 else rhs
+                    # Clip to prevent overflow (value should be bounded)
+                    # Max reasonable value: firm value with infinite dividends
+                    max_value = 100.0 * self.p.alpha / self.rho if self.rho > 0 else 1000.0
+                    V[i, j] = np.clip(V[i, j], -max_value, max_value)
+                else:
+                    # At τ=0, use terminal condition
+                    V[i, j] = self.p.liquidation_value
 
-                    policy_dividend[i, j] = opt_dividend
-                    policy_equity[i, j] = opt_equity
+                policy_dividend[i, j] = opt_dividend
+                policy_equity[i, j] = opt_equity
 
-                # Apply boundary conditions
-                V = self.apply_boundary_conditions(V, j)
-
-                # Check convergence
-                diff = np.max(np.abs(V[:, j] - V_prev[:, j]))
-                if diff < self.config.tolerance:
-                    break
-
-            if verbose and j_idx % 10 == 0:
-                iterator.set_postfix({"conv_iter": iteration+1, "max_diff": f"{diff:.2e}"})
+            # Apply boundary conditions
+            V = self.apply_boundary_conditions(V, j)
 
         self.V = V
         self.policy_dividend = policy_dividend

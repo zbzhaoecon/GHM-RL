@@ -72,23 +72,39 @@ The VFI solver implements the following algorithm:
 
 ### 1. Run Numerical Benchmark
 
-Basic usage:
+Quick test (1-2 minutes):
 
 ```bash
 python scripts/run_numerical_benchmark.py \
     --config configs/time_augmented_sparse_config.yaml \
-    --n-c 100 \
-    --n-tau 100 \
+    --n-c 25 \
+    --n-tau 25 \
+    --n-dividend 20 \
+    --n-equity 15 \
     --output-dir numerical_benchmark_results
 ```
 
-With Monte Carlo validation:
+Standard quality (10-20 minutes):
+
+```bash
+python scripts/run_numerical_benchmark.py \
+    --config configs/time_augmented_sparse_config.yaml \
+    --n-c 50 \
+    --n-tau 50 \
+    --n-dividend 30 \
+    --n-equity 20 \
+    --output-dir numerical_benchmark_results
+```
+
+High quality with Monte Carlo validation (1-2 hours):
 
 ```bash
 python scripts/run_numerical_benchmark.py \
     --config configs/time_augmented_sparse_config.yaml \
     --n-c 100 \
     --n-tau 100 \
+    --n-dividend 50 \
+    --n-equity 30 \
     --compute-mc \
     --mc-samples 100 \
     --output-dir numerical_benchmark_results
@@ -198,9 +214,10 @@ Good RL performance typically shows:
 
 ### Typical Runtime
 
-For grid sizes:
-- 100 × 100 state grid, 50 × 30 action grid: ~5-10 minutes
-- 200 × 200 state grid, 100 × 50 action grid: ~30-60 minutes
+For grid sizes (with vectorized solver):
+- 25 × 25 state grid, 20 × 15 action grid: ~1-2 minutes (quick test)
+- 50 × 50 state grid, 30 × 20 action grid: ~10-20 minutes (standard)
+- 100 × 100 state grid, 50 × 30 action grid: ~1-2 hours (high quality)
 
 ### Parallelization
 
