@@ -159,46 +159,35 @@ class GHMRewardFunction(RewardFunction):
         """
         Compute terminal reward with proper boundary conditions.
 
-        Boundary conditions:
-            1. Bankruptcy (c=0): V(0, τ) = liquidation_value (usually 0)
-            2. End of horizon (τ=0): V(c, 0) = V(c) from value function (bootstrap)
+        Boundary conditions for time-augmented finite-horizon problem:
+            1. Bankruptcy (c≤0): V(0, τ) = liquidation_value (typically 0)
+            2. Horizon end (τ=0): V(c, 0) = 0 (firm liquidates, cash is worthless)
 
-        For time-augmented dynamics:
-            - Terminated trajectories (c≤0): terminal_reward = liquidation_value
-            - Non-terminated at horizon end: terminal_reward = V(c, 0) for bootstrapping
+        The optimal policy should pay out all remaining cash as dividends
+        in the final period before τ=0, since:
+            - Dividend constraint: a_L ≤ c/dt allows full extraction
+            - Any cash remaining at τ=0 is lost (terminal value = 0)
 
         Args:
             state: Terminal states (batch, state_dim)
             terminated: Boolean mask (batch,) - True if bankrupt
-            value_function: Optional value network for continuation value
-            recapitalization_target: Target cash level c* for recapitalization
+            value_function: Optional value network (not used, for compatibility)
+            recapitalization_target: Not used in finite-horizon setting
 
         Returns:
-            Terminal rewards (batch,)
+            Terminal rewards (batch,) - always 0 or liquidation_value
         """
         batch_size = state.shape[0]
         device = state.device
-        terminal_rewards = torch.zeros(batch_size, dtype=torch.float32, device=device)
 
-        terminated_f = terminated.to(dtype=torch.float32, device=device)
-        liquidation_value = torch.tensor(self.liquidation_value, dtype=torch.float32, device=device)
-
-        # For bankrupt trajectories: use liquidation value (typically 0)
-        terminal_rewards = terminal_rewards + terminated_f * liquidation_value
-
-        # For non-bankrupt trajectories at horizon end (τ=0):
-        # V(c, 0) = perpetuity value of remaining cash
-        # Use FIXED formula to avoid feedback loop with learned value function
-        non_terminated = ~terminated
-        if non_terminated.any():
-            # Extract final cash level (first state component)
-            c_final = state[non_terminated, 0]
-
-            # Boundary condition: V(c, 0) = c (can liquidate for cash value)
-            # Simple linear boundary: firm with cash c at horizon end is worth c
-            horizon_value = c_final
-
-            terminal_rewards[non_terminated] = horizon_value
+        # Terminal value is liquidation_value for all trajectories
+        # (typically 0 for both bankrupt and horizon end)
+        terminal_rewards = torch.full(
+            (batch_size,),
+            self.liquidation_value,
+            dtype=torch.float32,
+            device=device
+        )
 
         return terminal_rewards
 
