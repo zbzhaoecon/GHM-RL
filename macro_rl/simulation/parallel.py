@@ -98,6 +98,7 @@ class ParallelTrajectorySimulator:
         T: float,
         n_workers: Optional[int] = None,
         integrator: Optional[object] = None,
+        use_sparse_rewards: bool = False,
     ):
         """Initialize parallel trajectory simulator."""
         from macro_rl.simulation.trajectory import TrajectorySimulator
@@ -114,6 +115,7 @@ class ParallelTrajectorySimulator:
             dt=dt,
             T=T,
             integrator=integrator,
+            use_sparse_rewards=use_sparse_rewards,
         )
 
         # Set number of workers

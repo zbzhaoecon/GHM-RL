@@ -52,6 +52,8 @@ class ModelBasedActorCritic:
         # Parallel simulation
         use_parallel: bool = False,
         n_workers: Optional[int] = None,
+        # Sparse rewards
+        use_sparse_rewards: bool = True,  # Use trajectory-level returns
     ) -> None:
         self.dynamics = dynamics
         self.control_spec = control_spec
@@ -79,13 +81,16 @@ class ModelBasedActorCritic:
         self.optimizer = Adam(self.ac.parameters(), lr=lr)
 
         # Simulators
+        self.use_sparse_rewards = use_sparse_rewards
         if use_parallel:
             self.simulator = ParallelTrajectorySimulator(
-                dynamics, control_spec, reward_fn, dt, T, n_workers=n_workers
+                dynamics, control_spec, reward_fn, dt, T, n_workers=n_workers,
+                use_sparse_rewards=use_sparse_rewards
             )
         else:
             self.simulator = TrajectorySimulator(
-                dynamics, control_spec, reward_fn, dt, T
+                dynamics, control_spec, reward_fn, dt, T,
+                use_sparse_rewards=use_sparse_rewards
             )
         self.diff_simulator = DifferentiableSimulator(
             dynamics, control_spec, reward_fn, dt, T
