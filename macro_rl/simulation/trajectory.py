@@ -198,10 +198,17 @@ class TrajectorySimulator:
         if not hasattr(self, '_rollout_call_count'):
             self._rollout_call_count = 0
         self._rollout_call_count += 1
-        print(f"\n[DIAGNOSTIC ROLLOUT #{self._rollout_call_count}]")
-        print(f"  use_sparse_rewards: {self.use_sparse_rewards}")
-        print(f"  batch_size: {initial_states.shape[0]}")
-        print(f"  max_steps: {self.max_steps}")
+
+        # Show initial states statistics
+        c_initial = initial_states[:, 0]
+        if initial_states.shape[1] > 1:
+            tau_initial = initial_states[:, 1]
+            print(f"\n[DIAGNOSTIC ROLLOUT #{self._rollout_call_count}]")
+            print(f"  Initial c: mean={c_initial.mean():.3f}, min={c_initial.min():.3f}, max={c_initial.max():.3f}")
+            print(f"  Initial τ: mean={tau_initial.mean():.3f}, min={tau_initial.min():.3f}, max={tau_initial.max():.3f}")
+        else:
+            print(f"\n[DIAGNOSTIC ROLLOUT #{self._rollout_call_count}]")
+            print(f"  Initial c: mean={c_initial.mean():.3f}, min={c_initial.min():.3f}, max={c_initial.max():.3f}")
 
         batch_size, state_dim = initial_states.shape
         action_dim = self.control_spec.dim
