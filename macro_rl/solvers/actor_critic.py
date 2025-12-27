@@ -100,18 +100,26 @@ class ModelBasedActorCritic:
         """
         Sample initial states from state space.
 
-        Backward-compatible helper that works with both old and new StateSpace API.
+        For time-augmented dynamics, this correctly uses the dynamics'
+        sample_initial_states method which fixes τ=T (time-to-horizon at start).
+        Otherwise falls back to uniform sampling.
         """
-        state_space = self.dynamics.state_space
+        # CRITICAL FIX: Check if dynamics has custom sampling method
+        # (e.g., time-augmented dynamics that fix τ=T at episode start)
+        if hasattr(self.dynamics, 'sample_initial_states'):
+            device = next(self.ac.parameters()).device
+            return self.dynamics.sample_initial_states(n, device=device)
 
-        # Try new API first
+        # Try StateSpace API
+        state_space = self.dynamics.state_space
         if hasattr(state_space, 'sample_uniform'):
             return state_space.sample_uniform(n)
 
-        # Fallback for old API - manually implement uniform sampling
+        # Fallback: uniform sampling over entire state space
         import torch
-        uniform_samples = torch.rand(n, state_space.dim)
-        samples = state_space.lower + uniform_samples * (state_space.upper - state_space.lower)
+        device = next(self.ac.parameters()).device
+        uniform_samples = torch.rand(n, state_space.dim, device=device)
+        samples = state_space.lower.to(device) + uniform_samples * (state_space.upper - state_space.lower).to(device)
         return samples
 
     def compute_critic_loss(
