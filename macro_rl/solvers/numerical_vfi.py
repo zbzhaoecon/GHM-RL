@@ -151,11 +151,16 @@ class NumericalVFISolver:
         else:
             V_cc = (V[i+1, j] - 2*V[i, j] + V[i-1, j]) / (self.dc ** 2)
 
-        # Time derivative (backward difference)
+        # Time derivative (backward difference) - not used in time-stepping version
         if j == 0:
             V_tau = 0.0  # At τ=0, no time derivative
         else:
             V_tau = (V[i, j] - V[i, j-1]) / self.dtau
+
+        # Replace NaN/Inf with 0
+        V_c = 0.0 if not np.isfinite(V_c) else V_c
+        V_cc = 0.0 if not np.isfinite(V_cc) else V_cc
+        V_tau = 0.0 if not np.isfinite(V_tau) else V_tau
 
         return V_c, V_cc, V_tau
 
@@ -202,8 +207,9 @@ class NumericalVFISolver:
         best_dividend = 0.0
         best_equity = 0.0
 
-        # Get derivatives
-        V_c, V_cc, V_tau = self.compute_derivatives(V, i, j)
+        # Get spatial derivatives only (V_c, V_cc)
+        # V_tau is handled implicitly by time-stepping scheme
+        V_c, V_cc, _ = self.compute_derivatives(V, i, j)
 
         # Grid search over actions
         for a_L in self.dividend_grid:
@@ -222,13 +228,13 @@ class NumericalVFISolver:
                 # Fixed cost indicator
                 fixed_cost = self.p.phi if a_E > 1e-6 else 0.0
 
-                # Instantaneous reward: dividend - equity cost - fixed cost
-                net_equity = a_E / self.p.p - fixed_cost
+                # Instantaneous reward: dividend - equity cost
                 reward = a_L - a_E
 
-                # HJB right-hand side:
-                # reward + drift * V_c + (-1) * V_tau + 0.5 * diff_sq * V_cc
-                rhs = reward + drift * V_c_upwind - V_tau + 0.5 * diff_sq * V_cc
+                # HJB right-hand side (spatial part only):
+                # Time derivative handled by backward induction scheme
+                # rhs = max_a [u(a) + μ(c,a)·V_c + 0.5·σ²(c)·V_cc]
+                rhs = reward + drift * V_c_upwind + 0.5 * diff_sq * V_cc
 
                 if rhs > best_value:
                     best_value = rhs
@@ -289,37 +295,37 @@ class NumericalVFISolver:
         iterator = tqdm(time_indices[1:], desc="VFI Backward Induction") if verbose else time_indices[1:]
 
         for j_idx, j in enumerate(iterator, start=1):
-            # For each time step, iterate to convergence
-            V_old = V.copy()
+            # Single pass per time step (standard backward induction)
+            # Update value function at each cash level
+            for i in range(self.config.n_c):
+                c = self.c_grid[i]
 
-            for iteration in range(self.config.max_iterations):
-                V_prev = V.copy()
+                # Optimize over actions using value from previous time
+                opt_dividend, opt_equity, rhs = self.optimize_action(c, V, i, j)
 
-                # Update value function at each cash level
-                for i in range(self.config.n_c):
-                    c = self.c_grid[i]
+                # Update using implicit time-stepping scheme
+                # HJB: ρV - ∂V/∂τ = rhs
+                # Discretized: ρV(τ) - [V(τ) - V(τ-dt)]/dt = rhs
+                # Solve for V(τ): V(τ) = [V(τ-dt)/dt + rhs] / (ρ + 1/dt)
 
-                    # Optimize over actions
-                    opt_dividend, opt_equity, rhs = self.optimize_action(c, V_prev, i, j)
+                if j > 0:
+                    # Use backward induction from previous time step
+                    V_prev_time = V[i, j-1]  # Value at previous time
+                    V[i, j] = (V_prev_time / self.dtau + rhs) / (self.rho + 1.0 / self.dtau)
 
-                    # Update using implicit scheme
-                    # V(c,τ) = [rhs + (ρ * dt) * V_old] / (1 + ρ * dt)
-                    # Simplified: V = rhs / ρ (steady state)
-                    V[i, j] = rhs / self.rho if self.rho > 0 else rhs
+                    # Clip to prevent overflow (value should be bounded)
+                    # Max reasonable value: firm value with infinite dividends
+                    max_value = 100.0 * self.p.alpha / self.rho if self.rho > 0 else 1000.0
+                    V[i, j] = np.clip(V[i, j], -max_value, max_value)
+                else:
+                    # At τ=0, use terminal condition
+                    V[i, j] = self.p.liquidation_value
 
-                    policy_dividend[i, j] = opt_dividend
-                    policy_equity[i, j] = opt_equity
+                policy_dividend[i, j] = opt_dividend
+                policy_equity[i, j] = opt_equity
 
-                # Apply boundary conditions
-                V = self.apply_boundary_conditions(V, j)
-
-                # Check convergence
-                diff = np.max(np.abs(V[:, j] - V_prev[:, j]))
-                if diff < self.config.tolerance:
-                    break
-
-            if verbose and j_idx % 10 == 0:
-                iterator.set_postfix({"conv_iter": iteration+1, "max_diff": f"{diff:.2e}"})
+            # Apply boundary conditions
+            V = self.apply_boundary_conditions(V, j)
 
         self.V = V
         self.policy_dividend = policy_dividend
