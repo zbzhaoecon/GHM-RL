@@ -702,21 +702,29 @@ class PolicyIterationSolver:
         V_c[-1] = (V[-1] - V[-2]) / self.dc  # Backward diff at boundary
         V_c[1:-1] = (V[2:] - V[:-2]) / (2 * self.dc)  # Central diff interior
 
-        # Smooth V_c to reduce noise
+        # Light smoothing of V_c to reduce numerical noise (single pass)
         V_c_smooth = V_c.copy()
-        for _ in range(3):  # Apply smoothing multiple times
-            V_c_smooth[1:-1] = 0.25 * V_c_smooth[:-2] + 0.5 * V_c_smooth[1:-1] + 0.25 * V_c_smooth[2:]
+        V_c_smooth[1:-1] = 0.25 * V_c_smooth[:-2] + 0.5 * V_c_smooth[1:-1] + 0.25 * V_c_smooth[2:]
 
-        # Use linear interpolation for smooth controls instead of sigmoid
-        # This avoids the sharp transitions that cause oscillations
+        # Apply FOC with smooth transition using sigmoid function
+        # The transition width is adaptive based on grid resolution
+        transition_width = 0.05  # Controls smoothness of policy transition
 
-        # Dividend: linear function of (1 - V_c) in region [0.8, 1.2]
-        # pay max if V_c < 0.8, pay 0 if V_c > 1.2, linear in between
-        div_raw = np.clip((1.2 - V_c_smooth) / 0.4, 0, 1) * self.config.dividend_max
+        # Dividend FOC: pay dividends when V_c < 1 (marginal value of cash is low)
+        # Using smooth sigmoid: dividend = div_max * sigmoid((1 - V_c) / width)
+        # When V_c < 1: (1-V_c) > 0, sigmoid is high -> pay dividends
+        # When V_c > 1: (1-V_c) < 0, sigmoid is low -> don't pay
+        div_arg = (1.0 - V_c_smooth) / transition_width
+        div_sigmoid = 1.0 / (1.0 + np.exp(-np.clip(div_arg, -20, 20)))
+        div_raw = div_sigmoid * self.config.dividend_max
 
-        # Equity: linear function of (V_c - p) in region [p-0.2, p+0.2]
-        # issue max if V_c > p+0.2, issue 0 if V_c < p-0.2, linear in between
-        eq_raw = np.clip((V_c_smooth - (self.p.p - 0.2)) / 0.4, 0, 1) * self.config.equity_max
+        # Equity FOC: issue equity when V_c > p (marginal value of cash exceeds dilution cost)
+        # Using smooth sigmoid: equity = eq_max * sigmoid((V_c - p) / width)
+        # When V_c > p: (V_c-p) > 0, sigmoid is high -> issue equity
+        # When V_c < p: (V_c-p) < 0, sigmoid is low -> don't issue
+        eq_arg = (V_c_smooth - self.p.p) / transition_width
+        eq_sigmoid = 1.0 / (1.0 + np.exp(-np.clip(eq_arg, -20, 20)))
+        eq_raw = eq_sigmoid * self.config.equity_max
 
         # Apply damping to prevent oscillations
         if old_dividend is not None:
@@ -809,11 +817,6 @@ class PolicyIterationSolver:
 
             # Apply boundary condition at c=0
             V[0, j] = self.p.liquidation_value
-
-            # Smooth policies across cash dimension to reduce noise
-            for _ in range(2):
-                policy_dividend[1:-1, j] = 0.25 * policy_dividend[:-2, j] + 0.5 * policy_dividend[1:-1, j] + 0.25 * policy_dividend[2:, j]
-                policy_equity[1:-1, j] = 0.25 * policy_equity[:-2, j] + 0.5 * policy_equity[1:-1, j] + 0.25 * policy_equity[2:, j]
 
         self.V = V
         self.policy_dividend = policy_dividend
