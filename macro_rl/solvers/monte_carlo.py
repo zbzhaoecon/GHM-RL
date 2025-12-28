@@ -83,6 +83,7 @@ class MonteCarloPolicyGradient(Solver):
         self.advantage_normalization = advantage_normalization
         self.max_grad_norm = max_grad_norm
         self.entropy_weight = entropy_weight
+        self._stability_warning_printed = False
 
         # Optimizers
         self.policy_optimizer = Adam(policy.parameters(), lr=lr_policy)
@@ -90,6 +91,21 @@ class MonteCarloPolicyGradient(Solver):
             self.baseline_optimizer = Adam(baseline.parameters(), lr=lr_baseline)
         else:
             self.baseline_optimizer = None
+
+        # Print stability warnings for high-variance configurations
+        if baseline is None:
+            print("\n" + "=" * 70)
+            print("WARNING: Running REINFORCE without baseline!")
+            print("This can cause high gradient variance and training instability.")
+            print("Consider enabling baseline (use_baseline: true) for stability.")
+            print("=" * 70 + "\n")
+
+        if not advantage_normalization:
+            print("\n" + "=" * 70)
+            print("WARNING: Advantage normalization is disabled!")
+            print("This can cause gradient scale issues and training instability.")
+            print("Consider enabling advantage_normalization: true for stability.")
+            print("=" * 70 + "\n")
 
     def solve(
         self,
@@ -198,6 +214,26 @@ class MonteCarloPolicyGradient(Solver):
             print(f"  Returns: min={returns.min():.4f}, max={returns.max():.4f}")
             # Skip this update to prevent corruption
             return self._get_safe_metrics(trajectories, initial_states, returns, advantages)
+
+        # SAFEGUARD: Check for extreme policy loss values (sign of instability)
+        # Typical policy loss should be in range [-100, 100] for reasonable training
+        policy_loss_magnitude = abs(policy_loss.item())
+        if policy_loss_magnitude > 1000:
+            if not self._stability_warning_printed:
+                print(f"\n" + "!" * 70)
+                print(f"WARNING: Extremely large policy loss detected: {policy_loss.item():.2f}")
+                print(f"  This usually indicates training instability.")
+                print(f"  Possible causes:")
+                print(f"    - No baseline (pure REINFORCE) with long trajectories")
+                print(f"    - Advantage normalization disabled")
+                print(f"    - Learning rate too high")
+                print(f"    - Policy actions at boundaries")
+                print(f"  Recommendations:")
+                print(f"    - Enable baseline (use_baseline: true)")
+                print(f"    - Enable advantage normalization")
+                print(f"    - Reduce learning rate (lr_policy < 0.0003)")
+                print(f"!" * 70 + "\n")
+                self._stability_warning_printed = True
 
         # 4b. Add entropy bonus (encourage exploration)
         entropy = self.policy.entropy(initial_states).mean()
@@ -321,7 +357,7 @@ class MonteCarloPolicyGradient(Solver):
 
     def _compute_policy_loss(self, trajectories, advantages: Tensor) -> Tensor:
         """
-        Compute REINFORCE policy loss.
+        Compute REINFORCE policy loss with proper normalization.
 
         Args:
             trajectories: TrajectoryBatch from rollout
@@ -329,6 +365,19 @@ class MonteCarloPolicyGradient(Solver):
 
         Returns:
             Policy loss (negative for maximization)
+
+        Note on normalization:
+            The standard REINFORCE gradient is: ∇J = E_τ [ (Σ_t log π(a_t|s_t)) · (G - b) ]
+            However, this creates gradient variance that scales with trajectory length T.
+            For long trajectories (T=3000), this can cause gradient explosion.
+
+            We normalize by the number of steps to make gradient scale independent of T:
+            ∇J ≈ E_τ [ (1/T Σ_t log π(a_t|s_t)) · (G - b) ]
+
+            This is equivalent to the step-level REINFORCE:
+            ∇J = E_τ [ Σ_t log π(a_t|s_t) · r_t ] with r_t = (G - b) / T
+
+            The gradient signal is preserved but scaled to a consistent magnitude.
         """
         B, T = trajectories.actions.shape[0], trajectories.actions.shape[1]
 
@@ -341,15 +390,17 @@ class MonteCarloPolicyGradient(Solver):
         log_probs_flat = self.policy.log_prob(states_flat, actions_flat)  # (B*T,)
         log_probs = log_probs_flat.reshape(B, T)  # (B, T)
 
-        # REINFORCE loss (negative for maximization)
-        # Standard REINFORCE: ∇J = E_τ [ (Σ_t log π(a_t|s_t)) · (G - b) ]
-        # where the expectation is over trajectories, not timesteps
-
         # Sum log probabilities over time for each trajectory
         log_prob_per_traj = (log_probs * trajectories.masks).sum(dim=1)  # (B,)
 
+        # CRITICAL FIX: Normalize by number of active steps to prevent gradient explosion
+        # This makes the gradient scale independent of trajectory length
+        n_steps_per_traj = trajectories.masks.sum(dim=1).clamp(min=1.0)  # (B,)
+        log_prob_per_traj_normalized = log_prob_per_traj / n_steps_per_traj
+
         # REINFORCE gradient estimator: average over trajectories
-        policy_loss = -(log_prob_per_traj * advantages).mean()
+        # Using normalized log probs prevents gradient explosion with long trajectories
+        policy_loss = -(log_prob_per_traj_normalized * advantages).mean()
 
         return policy_loss
 
