@@ -1,0 +1,124 @@
+# Stable Monte Carlo Training Configuration for Long Horizons (T=300)
+# This config uses settings optimized for training stability with REINFORCE
+# on long trajectories (3000 steps).
+
+# ============================================================================
+# DYNAMICS PARAMETERS
+# ============================================================================
+dynamics:
+  alpha: 0.18           # Mean cash flow rate
+  mu: 0.01              # Growth rate
+  r: 0.03               # Interest rate
+  lambda_: 0.02         # Carry cost
+  sigma_A: 0.25         # Permanent shock volatility
+  sigma_X: 0.12         # Transitory shock volatility
+  rho: -0.2             # Correlation between shocks
+  c_max: 2.0            # Maximum cash reserves
+  p: 1.06               # Proportional cost
+  phi: 0.002            # Fixed cost
+  omega: 0.55           # Recovery rate
+
+# ============================================================================
+# ACTION SPACE
+# ============================================================================
+action_space:
+  dividend_min: 0.0
+  dividend_max: 20.0
+  equity_min: 0.0
+  equity_max: 4.0
+  a_L_max: 20.0
+  a_E_max: 4.0
+  issuance_threshold: 0.05
+  issuance_cost: 0.002
+
+# ============================================================================
+# ENVIRONMENT
+# ============================================================================
+environment:
+  dt: 0.1
+  max_steps: 3000       # T / dt = 300 / 0.1 = 3000 steps
+  seed: null
+
+# ============================================================================
+# NETWORK ARCHITECTURE
+# ============================================================================
+network:
+  policy_hidden: [64, 64, 32]
+  policy_activation: relu
+  value_hidden: [64, 64, 32]
+  value_activation: relu
+  hidden_dims: [64, 64, 32]
+  shared_layers: 0
+  log_std_bounds: [-2.0, 0.5]
+  mean_output_clipping: [-10.0, 10.0]
+  distribution_type: tanh_normal
+
+# ============================================================================
+# TRAINING - OPTIMIZED FOR STABILITY
+# ============================================================================
+training:
+  dt: 0.1
+  T: 300.0              # Long horizon
+
+  # Time augmentation
+  use_time_augmented: true
+  use_sparse_rewards: true
+
+  # Training iterations
+  n_iterations: 50000
+  n_trajectories: 2048
+
+  # CRITICAL: Learning rates for stability
+  # Lower learning rate is essential for long-horizon REINFORCE
+  lr_policy: 0.0001     # REDUCED from 0.001! Critical for stability
+  lr_baseline: 0.0003   # Baseline can learn faster
+  lr: 0.0003
+
+  # CRITICAL: Optimization settings for stability
+  max_grad_norm: 0.5    # Tighter gradient clipping
+  advantage_normalization: true   # ENABLED! Critical for stability
+  entropy_weight: 0.01
+
+  # CRITICAL: Baseline for variance reduction
+  use_baseline: true    # ENABLED! Critical for stability with long horizons
+
+# ============================================================================
+# SOLVER - Monte Carlo with stability settings
+# ============================================================================
+solver:
+  solver_type: monte_carlo
+  critic_loss: mc+hjb
+  actor_loss: pathwise
+  hjb_weight: 0.1
+  use_parallel: true
+  n_workers: 8
+  batch_size: 1000
+
+# ============================================================================
+# REWARD FUNCTION
+# ============================================================================
+reward:
+  discount_rate: null   # Use r - mu = 0.02
+  issuance_cost: 0.06
+  liquidation_rate: 0.0
+  liquidation_flow: 0.0
+  fixed_cost: 0.002
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+logging:
+  log_dir: logs/mc_300_stable
+  log_freq: 50
+  eval_freq: 50
+  ckpt_freq: 1000
+  ckpt_dir: checkpoints/mc_300_stable
+
+# ============================================================================
+# MISC
+# ============================================================================
+misc:
+  seed: 42
+  device: cpu
+  resume: null
+  experiment_name: mc_300_stable
