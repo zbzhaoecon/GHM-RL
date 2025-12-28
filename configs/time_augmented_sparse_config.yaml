@@ -100,20 +100,20 @@ training:
 
   # Training iterations
   n_iterations: 5100     # Shorter test run
-  n_trajectories: 2048   # Increased from 256 to compensate for higher variance without baseline
+  n_trajectories: 2048   # Batch size for Monte Carlo
 
   # Learning rates
-  lr_policy: 0.0003     # 3e-4
-  lr_baseline: 0.0001   # 1e-4 (FIXED: 3x slower than policy to prevent baseline overfitting)
+  lr_policy: 0.0001     # REDUCED: Lower for stability with REINFORCE
+  lr_baseline: 0.0003   # Baseline can learn faster than policy
   lr: 0.0003            # For actor-critic (single optimizer for both actor and critic)
 
   # Optimization
-  max_grad_norm: 1.0
-  advantage_normalization: false  # DISABLED: normalization destroys signal when all returns are small
+  max_grad_norm: 0.5    # Tighter clipping for stability
+  advantage_normalization: true   # ENABLED: Critical for stable gradients!
   entropy_weight: 0.01
 
-  # Baseline
-  use_baseline: false  # DISABLED: baseline converges too fast, killing gradient signal
+  # Baseline - CRITICAL for variance reduction!
+  use_baseline: true    # ENABLED: Reduces gradient variance by orders of magnitude
 
 # ============================================================================
 # SOLVER
